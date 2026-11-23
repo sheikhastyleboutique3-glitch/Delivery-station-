@@ -11,6 +11,10 @@ import { writeAudit } from '../src/lib/audit';
 import type { Actor } from '../src/lib/actor';
 import { ean13CheckDigit, DEFAULT_SETTINGS } from '../src/lib/domain';
 import { reconcile } from '../src/lib/services/reconcile';
+import { createEmployee, changeEmployeeStatus } from '../src/lib/hr/employees';
+import { markAttendance } from '../src/lib/hr/attendance';
+import { addPayment, createPayout, upsertRate } from '../src/lib/hr/payroll';
+import { localDate } from '../src/lib/hr/util';
 import {
   customerReturn,
   deliver,
@@ -71,69 +75,105 @@ async function main() {
 
   // ─── نقاط الدليفري ───
   const wh = await prisma.deliveryPoint.create({
-    data: { code: 'WH-MAIN', name: 'المستودع الرئيسي', type: 'WAREHOUSE', address: 'المنطقة الصناعية، شارع 24', phone: '+97440000001' },
+    data: { code: 'WH-MAIN', name: 'المستودع الرئيسي', type: 'WAREHOUSE', address: 'الجزائر العاصمة، المنطقة الصناعية الرغاية', phone: '+213560000001' },
   });
   const north = await prisma.deliveryPoint.create({
-    data: { code: 'HUB-NORTH', name: 'نقطة الشمال', type: 'HUB', address: 'الخور، الشارع التجاري', phone: '+97440000002' },
+    data: { code: 'HUB-ORAN', name: 'نقطة وهران', type: 'HUB', address: 'وهران، حي العقيد لطفي', phone: '+213560000002' },
   });
   const south = await prisma.deliveryPoint.create({
-    data: { code: 'HUB-SOUTH', name: 'نقطة الجنوب', type: 'HUB', address: 'الوكرة، طريق الميناء', phone: '+97440000003' },
+    data: { code: 'HUB-BLIDA', name: 'نقطة البليدة', type: 'HUB', address: 'البليدة، طريق الجزائر', phone: '+213560000003' },
   });
   console.log('✓ 3 نقاط دليفري');
 
   // ─── المستخدمون ───
-  const keeper = await upsertUser('warehouse@rasd.local', 'سالم أمين المستودع', 'Store@12345', 'WAREHOUSE', wh.id);
-  const hubMgr = await upsertUser('hub@rasd.local', 'نورة مسؤولة نقطة الشمال', 'Hub@12345', 'HUB_MANAGER', north.id);
+  const keeper = await upsertUser('warehouse@rasd.local', 'سليم أمين المستودع', 'Store@12345', 'WAREHOUSE', wh.id);
+  const hubMgr = await upsertUser('hub@rasd.local', 'نسرين مسؤولة نقطة وهران', 'Hub@12345', 'HUB_MANAGER', north.id);
 
-  // ─── السائقون ───
-  const drivers = await Promise.all(
-    [
-      { fullName: 'أحمد محمود', phone: '+97455510001', altPhone: '+97466610001', nationalId: '28763400001', vehicleType: 'دراجة نارية', vehiclePlate: '123456', deliveryPointId: wh.id, address: 'الدوحة، فريج بن محمود، شارع 12' },
-      { fullName: 'خالد يوسف', phone: '+97455510002', nationalId: '28763400002', vehicleType: 'سيارة فان', vehiclePlate: '234567', deliveryPointId: wh.id, address: 'الدوحة، المنصورة' },
-      { fullName: 'محمد علي', phone: '+97455510003', nationalId: '28763400003', vehicleType: 'دراجة نارية', vehiclePlate: '345678', deliveryPointId: north.id, address: 'الخور' },
-      { fullName: 'عمر حسن', phone: '+97455510004', nationalId: '28763400004', vehicleType: 'سيارة', vehiclePlate: '456789', deliveryPointId: south.id, address: 'الوكرة', status: 'INACTIVE' as const, notes: 'في إجازة' },
-    ].map((d) => prisma.driver.create({ data: d })),
-  );
-  const [ahmed, khaled, mohammed] = drivers;
-  const driverUser = await upsertUser('driver@rasd.local', 'أحمد محمود', 'Driver@12345', 'DRIVER', wh.id);
+  // ─── الموظفون والسائقون (كل سائق له ملف وظيفي ونظام دفع) ───
+  const tz = (await prisma.setting.findUnique({ where: { key: 'timezone' } }))?.value as string | undefined;
+  const today = localDate(new Date(), tz ?? DEFAULT_SETTINGS.timezone);
+  const inDays = (n: number) => localDate(new Date(Date.now() + n * 86_400_000), tz ?? DEFAULT_SETTINGS.timezone);
+  const mkEmp = (data: Record<string, unknown>) => createEmployee(prisma, adminActor, { hireDate: '2026-01-05', nationality: 'جزائرية', ...data });
+
+  const eAhmed = await mkEmp({
+    fullName: 'أحمد بن علي', phone: '+213550100001', altPhone: '+213660100001', nationalId: '109870012345678', idExpiryDate: inDays(20),
+    dateOfBirth: '1995-04-12', address: 'الجزائر العاصمة، باب الزوار، حي 5 جويلية', jobType: 'DRIVER', jobTitle: 'سائق دراجة نارية',
+    deliveryPointId: wh.id, vehicleType: 'دراجة نارية', vehiclePlate: '01234-110-16', drivingLicenseNumber: 'DZ-16-778812', drivingLicenseExpiry: '2028-06-30',
+    payType: 'PER_DELIVERY', commissionMode: 'PER_UNIT',
+  });
+  const eKhaled = await mkEmp({
+    fullName: 'خالد بوزيد', phone: '+213550100002', nationalId: '109870012345679', dateOfBirth: '1990-09-01',
+    address: 'الجزائر العاصمة، الحراش', jobType: 'DRIVER', jobTitle: 'سائق فان', deliveryPointId: wh.id, vehicleType: 'فان', vehiclePlate: '05678-112-16',
+    drivingLicenseNumber: 'DZ-16-110034', drivingLicenseExpiry: inDays(-3),
+    payType: 'HYBRID', dailyRate: 1500, monthlySalary: 0, commissionMode: 'PER_COLIS',
+  });
+  const eMohammed = await mkEmp({
+    fullName: 'محمد قادري', phone: '+213550100003', nationalId: '109870012345680', address: 'وهران، بئر الجير', jobType: 'DRIVER',
+    deliveryPointId: north.id, vehicleType: 'دراجة نارية', vehiclePlate: '04567-119-31', payType: 'PER_DELIVERY', commissionMode: 'PER_UNIT',
+  });
+  const eOmar = await mkEmp({
+    fullName: 'عمر سعيدي', phone: '+213550100004', nationalId: '109870012345681', address: 'البليدة، أولاد يعيش', jobType: 'DRIVER',
+    deliveryPointId: south.id, vehicleType: 'سيارة', vehiclePlate: '07890-115-09', payType: 'MONTHLY_OR_DAILY', monthlySalary: 40000,
+  });
+  const eSalim = await mkEmp({
+    fullName: 'سليم مرابط', phone: '+213550100005', nationalId: '109870012345682', jobType: 'WAREHOUSE_KEEPER', jobTitle: 'أمين المستودع الرئيسي',
+    deliveryPointId: wh.id, payType: 'MONTHLY_OR_DAILY', monthlySalary: 45000, hireDate: '2025-11-01',
+  });
+  await mkEmp({
+    fullName: 'نسرين حداد', phone: '+213550100006', nationalId: '109870012345683', jobType: 'HUB_MANAGER', deliveryPointId: north.id,
+    payType: 'MONTHLY_OR_DAILY', monthlySalary: 55000,
+  });
+  await mkEmp({
+    fullName: 'كريمة عياش', phone: '+213550100007', nationalId: '109870012345684', jobType: 'ADMINISTRATIVE', jobTitle: 'محاسبة',
+    payType: 'MONTHLY_OR_DAILY', monthlySalary: 60000, idExpiryDate: inDays(-10),
+  });
+  const driverOf = async (empId: string) => prisma.driver.findUniqueOrThrow({ where: { employeeId: empId } });
+  const [ahmed, khaled, mohammed] = await Promise.all([driverOf(eAhmed.id), driverOf(eKhaled.id), driverOf(eMohammed.id)]);
+  await changeEmployeeStatus(prisma, adminActor, eOmar.id, { status: 'SUSPENDED', terminationReason: 'في عطلة مرضية' });
+  const driverUser = await upsertUser('driver@rasd.local', 'أحمد بن علي', 'Driver@12345', 'DRIVER', wh.id);
   await prisma.driver.update({ where: { id: ahmed.id }, data: { userId: driverUser.id } });
-  console.log('✓ 4 سائقين + 4 مستخدمين (مدير، أمين مستودع، مسؤول نقطة، سائق)');
+  console.log('✓ 7 موظفين (4 سائقين بأنظمة دفع مختلفة، أمين مستودع، مسؤولة نقطة، محاسبة) + 4 حسابات دخول');
+
+  // أسعار توصيل خاصة: خالد 300 دج لكل طرد، ونقطة وهران 250 دج للقطعة
+  await upsertRate(prisma, adminActor, { mode: 'PER_COLIS', amount: 300, employeeId: eKhaled.id, label: 'سعر خالد للطرد' });
+  await upsertRate(prisma, adminActor, { mode: 'PER_UNIT', amount: 250, deliveryPointId: north.id, label: 'منطقة وهران' });
 
   // ─── العملاء ───
   const customers = await Promise.all(
     [
-      { name: 'شركة النخبة للتجارة', phone: '+97444123001', address: 'الدوحة، الخليج الغربي، برج 5', deliveryNotes: 'الاستلام من الاستقبال' },
-      { name: 'فاطمة الكواري', phone: '+97455123002', address: 'الريان، شارع 340، فيلا 18', deliveryNotes: 'الاتصال قبل الوصول' },
-      { name: 'مطعم الديرة', phone: '+97444123003', address: 'سوق واقف، محل 41' },
-      { name: 'يوسف المري', phone: '+97455123004', address: 'لوسيل، مارينا، شقة 1203' },
-      { name: 'صيدلية الشفاء', phone: '+97444123005', address: 'الخور، الشارع التجاري' },
-      { name: 'مريم العطية', phone: '+97455123006', address: 'الوكرة، فريج 7', deliveryNotes: 'لا يوجد مصعد' },
+      { name: 'شركة الأمل للتوزيع', phone: '+213021450001', address: 'الجزائر العاصمة، حيدرة، شارع سويداني بوجمعة 12', deliveryNotes: 'الاستلام من الاستقبال' },
+      { name: 'فاطمة الزهراء بن يوسف', phone: '+213551230002', address: 'الجزائر العاصمة، بئر مراد رايس، عمارة 18', deliveryNotes: 'الاتصال قبل الوصول' },
+      { name: 'مطعم القصبة', phone: '+213021450003', address: 'الجزائر العاصمة، القصبة، محل 41' },
+      { name: 'يوسف بلقاسم', phone: '+213551230004', address: 'باب الزوار، حي الجرف، شقة 12' },
+      { name: 'صيدلية الشفاء', phone: '+213041230005', address: 'وهران، شارع العربي بن مهيدي' },
+      { name: 'مريم بوعلام', phone: '+213551230006', address: 'البليدة، حي بن بولعيد', deliveryNotes: 'لا يوجد مصعد' },
     ].map((c) => prisma.customer.create({ data: c })),
   );
   console.log('✓ 6 عملاء');
 
   // ─── المنتجات: 20 منتجاً في 4 فئات ───
+  // الأسعار بالدينار الجزائري
   const catalog: [string, string, number, number, number][] = [
-    ['إلكترونيات', 'سماعات لاسلكية', 189, 120, 10],
-    ['إلكترونيات', 'شاحن سريع 30 واط', 59, 32, 15],
-    ['إلكترونيات', 'باور بانك 20000', 119, 75, 10],
-    ['إلكترونيات', 'ساعة ذكية', 349, 230, 10],
-    ['إلكترونيات', 'كابل USB-C', 25, 9, 30],
-    ['منزلية', 'خلاط كهربائي', 229, 150, 5],
-    ['منزلية', 'مكواة بخار', 149, 95, 5],
-    ['منزلية', 'طقم أواني 10 قطع', 399, 260, 3],
-    ['منزلية', 'مصباح مكتب LED', 79, 40, 8],
-    ['منزلية', 'ميزان مطبخ رقمي', 45, 22, 10],
-    ['عناية شخصية', 'عطر عود 100 مل', 299, 140, 6],
-    ['عناية شخصية', 'ماكينة حلاقة', 169, 105, 6],
-    ['عناية شخصية', 'مجفف شعر', 139, 85, 6],
-    ['عناية شخصية', 'طقم عناية بالبشرة', 219, 120, 5],
-    ['عناية شخصية', 'فرشاة أسنان كهربائية', 129, 70, 8],
-    ['ملابس وأحذية', 'حذاء رياضي', 259, 150, 6],
-    ['ملابس وأحذية', 'حقيبة ظهر', 149, 80, 6],
-    ['ملابس وأحذية', 'قميص قطني', 69, 30, 12],
-    ['ملابس وأحذية', 'نظارة شمسية', 189, 90, 5],
-    ['ملابس وأحذية', 'محفظة جلد', 99, 45, 8],
+    ['إلكترونيات', 'سماعات لاسلكية', 4500, 3000, 10],
+    ['إلكترونيات', 'شاحن سريع 30 واط', 1800, 1000, 15],
+    ['إلكترونيات', 'باور بانك 20000', 3500, 2300, 10],
+    ['إلكترونيات', 'ساعة ذكية', 9900, 6800, 10],
+    ['إلكترونيات', 'كابل USB-C', 600, 250, 30],
+    ['أجهزة منزلية', 'خلاط كهربائي', 7500, 5200, 5],
+    ['أجهزة منزلية', 'مكواة بخار', 4900, 3300, 5],
+    ['أجهزة منزلية', 'طقم أواني 10 قطع', 12900, 8900, 3],
+    ['أجهزة منزلية', 'مصباح مكتب LED', 2500, 1300, 8],
+    ['أجهزة منزلية', 'ميزان مطبخ رقمي', 1600, 800, 10],
+    ['عناية شخصية', 'عطر عود 100 مل', 8500, 4200, 6],
+    ['عناية شخصية', 'ماكينة حلاقة', 5200, 3300, 6],
+    ['عناية شخصية', 'مجفف شعر', 4300, 2700, 6],
+    ['عناية شخصية', 'طقم عناية بالبشرة', 6900, 3900, 5],
+    ['عناية شخصية', 'فرشاة أسنان كهربائية', 3900, 2200, 8],
+    ['ملابس وأحذية', 'حذاء رياضي', 7900, 4800, 6],
+    ['ملابس وأحذية', 'حقيبة ظهر', 4500, 2500, 6],
+    ['ملابس وأحذية', 'قميص قطني', 2200, 1000, 12],
+    ['ملابس وأحذية', 'نظارة شمسية', 5500, 2800, 5],
+    ['ملابس وأحذية', 'محفظة جلد', 3000, 1400, 8],
   ];
   const products: Product[] = [];
   for (let i = 0; i < catalog.length; i++) {
@@ -178,7 +218,7 @@ async function main() {
   // منتج تحت الحد الأدنى لإظهار التنبيه
   // (طقم الأواني: حد التنبيه 3، نصرف معظمه لاحقاً)
 
-  // 2) تحويل جزء إلى نقطة الشمال ثم إدخال مباشر عند الشمال
+  // 2) تحويل جزء إلى نقطة وهران ثم إدخال مباشر عند وهران
   await transfer(prisma, keeperA, {
     idempotencyKey: key('trf'),
     fromPointId: wh.id,
@@ -254,7 +294,7 @@ async function main() {
     ],
   });
 
-  // 5) مسؤول نقطة الشمال يصرف لمحمد، يسلّم الكل، ثم إرجاع ومرتجع عميل
+  // 5) مسؤولة نقطة وهران تصرف لمحمد، يسلّم الكل، ثم إرجاع ومرتجع عميل
   await dispatch(prisma, hubA, {
     idempotencyKey: key('dsp-north'),
     driverId: mohammed.id,
@@ -295,6 +335,30 @@ async function main() {
     lines: [{ productId: P('كابل USB-C').id, quantity: 1, result: 'AVAILABLE' }],
   });
 
+  // ─── الحضور اليدوي للموظفين الإداريين في الشهر الماضي + كشف مدفوع جزئياً ───
+  const [ty, tm] = today.split('-').map(Number);
+  const prev = new Date(Date.UTC(ty, tm - 2, 1));
+  const prevYm = prev.toISOString().slice(0, 7);
+  const prevLast = new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() + 1, 0)).getUTCDate();
+  let marked = 0;
+  for (let d = 1; d <= prevLast && marked < 22; d++) {
+    const date = `${prevYm}-${String(d).padStart(2, '0')}`;
+    const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
+    if (dow === 5 || dow === 6) continue; // عطلة نهاية الأسبوع في الجزائر: الجمعة والسبت
+    await markAttendance(prisma, adminActor, eSalim.id, { date, status: 'PRESENT' });
+    marked++;
+  }
+  const salimPayout = await createPayout(prisma, adminActor, {
+    employeeId: eSalim.id,
+    from: `${prevYm}-01`,
+    to: `${prevYm}-${String(prevLast).padStart(2, '0')}`,
+    bonusAmount: 2000,
+    deductionAmount: 5000,
+    notes: 'خصم سلفة 5000 دج',
+  });
+  await addPayment(prisma, adminActor, salimPayout.id, { idempotencyKey: key('pay'), amount: 20000, method: 'CCP', reference: 'CCP-0099812' });
+  console.log(`✓ حضور ${marked} يوماً لأمين المستودع في ${prevYm} + كشف ${salimPayout.payoutNo} (صافي ${salimPayout.netAmount} دج، مدفوع جزئياً)`);
+
   const report = await reconcile(prisma);
   console.log(report.ok ? '✓ فحص التطابق: كل الأرصدة مطابقة لسجل الحركات' : `✗ فحص التطابق: ${report.mismatches.length} فرق`);
   if (!report.ok) {
@@ -302,6 +366,8 @@ async function main() {
     process.exitCode = 1;
   }
 
+  const earned = await prisma.deliveryEarning.aggregate({ _sum: { amount: true, units: true } });
+  console.log(`✓ عمولات التوصيل المسجلة تلقائياً: ${earned._sum.units ?? 0} قطعة = ${earned._sum.amount ?? 0} دج`);
   const totals = await prisma.stockColorBalance.groupBy({ by: ['color'], _sum: { quantity: true } });
   console.log('الأرصدة حسب اللون:', Object.fromEntries(totals.map((t) => [t.color, t._sum.quantity])));
   console.log('\nحسابات الدخول التجريبية (غيّر كلمات المرور بعد أول دخول):');

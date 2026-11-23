@@ -7,7 +7,11 @@ export function numberLocale(s: Pick<AppSettings, 'numerals'>) {
 export function makeFormatters(s: AppSettings) {
   const loc = numberLocale(s);
   const num = new Intl.NumberFormat(loc);
-  const money = new Intl.NumberFormat(loc, { style: 'currency', currency: s.currency, minimumFractionDigits: 2 });
+  // الدينار الجزائري يُعرض "20,000.00 دج". بقية العملات بتنسيق Intl القياسي
+  const SYMBOLS: Record<string, string> = { DZD: 'دج' };
+  const num2 = new Intl.NumberFormat(loc, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const intl = new Intl.NumberFormat(loc, { style: 'currency', currency: s.currency, minimumFractionDigits: 2 });
+  const money = { format: (v: number) => (SYMBOLS[s.currency] ? `${num2.format(v)} ${SYMBOLS[s.currency]}` : intl.format(v)) };
   const dt = new Intl.DateTimeFormat(s.numerals === 'arabic' ? 'ar-EG' : 'ar-u-nu-latn', {
     timeZone: s.timezone,
     year: 'numeric',
@@ -25,6 +29,13 @@ export function makeFormatters(s: AppSettings) {
   return {
     n: (v: number | string | null | undefined) => (v === null || v === undefined || v === '' ? '—' : num.format(Number(v))),
     money: (v: number | string | null | undefined) => (v === null || v === undefined || v === '' ? '—' : money.format(Number(v))),
+    /** تاريخ فقط بصيغة YYYY-MM-DD قادم من الخادم (بدون تحويل منطقة زمنية) */
+    ymd: (v: string | null | undefined) => {
+      if (!v) return '—';
+      const [y, m, day] = v.slice(0, 10).split('-').map(Number);
+      return d.format(new Date(Date.UTC(y, m - 1, day, 12)));
+    },
+    currencySymbol: SYMBOLS[s.currency] ?? s.currency,
     dateTime: (v: string | Date | null | undefined) => (v ? dt.format(new Date(v)) : '—'),
     date: (v: string | Date | null | undefined) => (v ? d.format(new Date(v)) : '—'),
     since: (v: string | Date | null | undefined) => {

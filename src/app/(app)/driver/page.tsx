@@ -8,8 +8,21 @@ import type { Custody, Operation, Paged } from '@/lib/client/types';
 import { ColorChip } from '@/components/colors';
 import { DeliveryForm } from '@/components/delivery-form';
 import { MovementsList } from '@/components/movements';
+import { PayoutStatusBadge } from '@/components/hr/payroll';
+import type { PayoutStatus } from '@/lib/domain';
 import { useApp } from '@/components/providers';
 import { Button, Card, EmptyState, ErrorBox, Loading, Modal, PageHeader } from '@/components/ui';
+
+interface MyEarnings {
+  workedDays: number;
+  deliveredUnits: number;
+  deliveredColis: number;
+  baseAmount: string;
+  commissionAmount: string;
+  grossAmount: string;
+  earningsBreakdown: { mode: string; quantity: number; rate: string; amount: string }[];
+  payouts: { id: string; periodStart: string; periodEnd: string; netAmount: string; remainingAmount: string; status: PayoutStatus }[];
+}
 
 export default function DriverHome() {
   const { user, f, toast } = useApp();
@@ -17,6 +30,7 @@ export default function DriverHome() {
   const driverId = user.driverId;
   const custody = useApi<Custody>(driverId ? `/api/drivers/${driverId}/custody` : null, { refreshMs: 30_000 });
   const pending = useApi<Paged<Operation>>(driverId ? `/api/ops${qs({ kind: 'DISPATCH', status: 'PENDING_DRIVER_ACK', pageSize: 20 })}` : null, { refreshMs: 30_000 });
+  const earnings = useApi<MyEarnings | null>(driverId ? '/api/me/earnings' : null, { refreshMs: 60_000 });
   const [delivering, setDelivering] = useState(false);
   const [queue, setQueue] = useState<QueuedRequest[]>([]);
   const [acking, setAcking] = useState<string | null>(null);
@@ -124,6 +138,61 @@ export default function DriverHome() {
         </ul>
       </Card>
 
+      {earnings.data && (
+        <Card title="مستحقاتي هذا الشهر" className="mt-4">
+          <dl className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-xl bg-slate-50 p-2">
+              <dt className="text-[11px] text-slate-500">أيام العمل</dt>
+              <dd className="text-xl font-black">{f.n(earnings.data.workedDays)}</dd>
+            </div>
+            <div className="rounded-xl bg-green-50 p-2">
+              <dt className="text-[11px] text-green-800">قطع مسلّمة</dt>
+              <dd className="text-xl font-black text-green-900">{f.n(earnings.data.deliveredUnits)}</dd>
+            </div>
+            <div className="rounded-xl bg-green-50 p-2">
+              <dt className="text-[11px] text-green-800">طرود</dt>
+              <dd className="text-xl font-black text-green-900">{f.n(earnings.data.deliveredColis)}</dd>
+            </div>
+          </dl>
+          <ul className="mt-3 space-y-1 text-sm">
+            {earnings.data.earningsBreakdown.map((g, i) => (
+              <li key={i} className="flex justify-between gap-2">
+                <span>
+                  {f.n(g.quantity)} {g.mode === 'PER_COLIS' ? 'طرد' : 'قطعة'} × {f.money(g.rate)}
+                </span>
+                <span className="font-bold tabular-nums">{f.money(g.amount)}</span>
+              </li>
+            ))}
+            {Number(earnings.data.baseAmount) > 0 && (
+              <li className="flex justify-between gap-2">
+                <span>أجر الأيام</span>
+                <span className="font-bold tabular-nums">{f.money(earnings.data.baseAmount)}</span>
+              </li>
+            )}
+          </ul>
+          <p className="mt-2 flex items-center justify-between rounded-xl bg-slate-900 p-3 text-white">
+            <span>الإجمالي حتى اليوم</span>
+            <b className="text-lg tabular-nums">{f.money(earnings.data.grossAmount)}</b>
+          </p>
+          {earnings.data.payouts.length > 0 && (
+            <ul className="mt-3 divide-y divide-slate-100 text-sm">
+              {earnings.data.payouts.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span>
+                    {p.periodStart} ← {p.periodEnd}
+                    <span className="block text-xs text-slate-500">
+                      الصافي {f.money(p.netAmount)} · المتبقي {f.money(p.remainingAmount)}
+                    </span>
+                  </span>
+                  <PayoutStatusBadge status={p.status} />
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 text-[11px] text-slate-500">تقدير تلقائي من تسليماتك وأيام عملك. المبلغ النهائي في كشف المستحقات الذي يعتمده المدير.</p>
+        </Card>
+      )}
+
       <Card title="آخر حركاتي" className="mt-4">
         <MovementsList filter={{ driverId }} pageSize={10} />
       </Card>
@@ -137,6 +206,7 @@ export default function DriverHome() {
             onDone={() => {
               setDelivering(false);
               custody.reload();
+              earnings.reload();
               refreshQueue();
             }}
           />

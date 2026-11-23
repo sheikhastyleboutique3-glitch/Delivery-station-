@@ -23,6 +23,15 @@ const PATHS = {
   check: 'm4 12.5 5 5L20 6.5',
   print: 'M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z',
   logout: 'M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10',
+  idcard: 'M3 5h18v14H3zM8 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM5 16a3 3 0 0 1 6 0M14 9h4M14 13h4',
+  wallet: 'M3 7h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 0 2-3h11v3M17 13.5h.01',
+  calendar: 'M4 6h16v15H4zM4 10h16M8 3v4M16 3v4',
+  upload: 'M12 16V4M7 9l5-5 5 5M4 20h16',
+  file: 'M6 3h9l4 4v14H6zM15 3v4h4',
+  download: 'M12 4v12M7 11l5 5 5-5M4 20h16',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14',
+  eye: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
+  calculator: 'M5 3h14v18H5zM8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01',
 } as const;
 
 export type IconName = keyof typeof PATHS;

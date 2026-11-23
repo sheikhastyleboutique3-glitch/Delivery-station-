@@ -33,6 +33,8 @@ export const NAV: NavItem[] = [
   { href: '/products', label: 'المنتجات', icon: 'box', roles: STAFF },
   { href: '/customers', label: 'العملاء', icon: 'users', roles: STAFF },
   { href: '/reports', label: 'التقارير', icon: 'chart', roles: STAFF },
+  { href: '/employees', label: 'الموظفون والسائقون', icon: 'idcard', roles: ['ADMIN'] },
+  { href: '/payroll', label: 'الرواتب والمستحقات', icon: 'wallet', roles: ['ADMIN'] },
   { href: '/points', label: 'نقاط الدليفري', icon: 'pin', roles: ['ADMIN'] },
   { href: '/users', label: 'المستخدمون', icon: 'key', roles: ['ADMIN'] },
   { href: '/audit', label: 'التدقيق والتطابق', icon: 'shield', roles: ['ADMIN'] },

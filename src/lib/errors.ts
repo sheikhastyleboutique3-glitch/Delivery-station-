@@ -76,6 +76,19 @@ export function toErrorBody(err: unknown): { status: number; body: ErrorBody } {
     }
   }
   const msg = err instanceof Error ? err.message : String(err);
+  if (/payouts_no_overlap/.test(msg)) {
+    return { status: 409, body: { code: 'PAYOUT_OVERLAP', message_ar: 'يوجد كشف مستحقات آخر لنفس الموظف يتداخل مع هذه الفترة' } };
+  }
+  if (/payouts_not_overpaid/.test(msg)) {
+    return { status: 409, body: { code: 'OVERPAID', message_ar: 'المدفوع لا يمكن أن يتجاوز صافي المستحق' } };
+  }
+  if (/delivery_rates_one_active_scope/.test(msg)) {
+    return { status: 409, body: { code: 'DUPLICATE_RATE', message_ar: 'يوجد سعر نشط لنفس النطاق. عدّله بدلاً من إضافة سعر جديد' } };
+  }
+  if (/P0001|للإضافة فقط|لا يمكن حذف عمولة|لا يمكن تعديلها/.test(msg)) {
+    const m = /(لا يمكن[^"\n`]*|الجدول [^"\n`]*)/.exec(msg);
+    return { status: 409, body: { code: 'IMMUTABLE', message_ar: m ? m[1].trim() : 'هذا السجل لا يقبل التعديل' } };
+  }
   if (/check constraint/i.test(msg)) {
     return { status: 409, body: { code: 'CONSTRAINT', message_ar: 'العملية تخالف قيود سلامة البيانات (مثل رصيد سالب)' } };
   }

@@ -64,6 +64,17 @@ export async function apiSend<T>(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', ur
   return parse<T>(res);
 }
 
+/** رفع ملف (multipart) مع نفس حماية CSRF */
+export async function apiUpload<T>(url: string, form: FormData): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'X-Rasd-Request': '1' }, body: form });
+  } catch {
+    throw new ApiError('NETWORK', 0, 'تعذر الاتصال بالخادم. تحقق من الإنترنت');
+  }
+  return parse<T>(res);
+}
+
 export function qs(params: Record<string, string | number | boolean | null | undefined>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') sp.set(k, String(v));

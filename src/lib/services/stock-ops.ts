@@ -25,6 +25,7 @@ import {
   transferSchema,
 } from '../validation';
 import type { Role } from '../domain';
+import { recordDeliveryActivity, recordDispatchActivity } from '../hr/activity';
 
 const STAFF: Role[] = ['ADMIN', 'WAREHOUSE', 'HUB_MANAGER'];
 
@@ -114,6 +115,10 @@ export async function dispatch(db: Db, actor: Actor, raw: unknown): Promise<Oper
   await loadActivePoint(db, input.pointId);
   const driver = await loadDriver(db, input.driverId);
   if (driver.status === 'INACTIVE') throw Errors.validation(`السائق "${driver.fullName}" غير نشط ولا يمكن الصرف له`);
+  if (driver.employeeId) {
+    const emp = await db.employee.findUnique({ where: { id: driver.employeeId }, select: { status: true } });
+    if (emp && emp.status !== 'ACTIVE') throw Errors.validation(`ملف السائق "${driver.fullName}" الوظيفي موقوف أو منتهٍ ولا يمكن الصرف له`);
+  }
   if (driver.deliveryPointId !== input.pointId && actor.role !== 'ADMIN') {
     throw Errors.validation(`السائق "${driver.fullName}" لا يتبع هذه النقطة. الصرف لسائق من نقطة أخرى يحتاج صلاحية مدير النظام`);
   }
@@ -149,7 +154,11 @@ export async function dispatch(db: Db, actor: Actor, raw: unknown): Promise<Oper
         });
       }
     },
-    (tx) => refreshDriverStatus(tx, driver.id),
+    async (tx) => {
+      await refreshDriverStatus(tx, driver.id);
+      // حضور تلقائي: استلام بضاعة للتوصيل = يوم عمل
+      await recordDispatchActivity(tx, driver.id, input.lines.reduce((s, l) => s + l.quantity, 0));
+    },
   );
 }
 
@@ -227,6 +236,12 @@ export async function deliver(db: Db, actor: Actor, raw: unknown): Promise<Opera
           });
         }
       }
+      // حضور تلقائي + عدد القطع والطرود المسلّمة + عمولة التوصيل بالسعر المعتمد الآن
+      await recordDeliveryActivity(tx, {
+        driverId: driver.id,
+        operationId: ctx.operationId,
+        lines: input.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+      });
     },
     (tx) => refreshDriverStatus(tx, driver.id),
   );

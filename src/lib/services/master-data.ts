@@ -7,6 +7,7 @@ import { Errors } from '../errors';
 import { hashPassword } from '../auth/password';
 import { getSettings, settingsSchema } from '../settings';
 import { canSeeCost } from './queries';
+import { createEmployeeForDriver, syncEmployeeFromDriver } from '../hr/employees';
 import {
   customerSchema,
   customerUpdateSchema,
@@ -194,8 +195,13 @@ export async function createDriver(db: Db, actor: Actor, raw: unknown) {
   requireRole(actor, ['ADMIN', 'WAREHOUSE', 'HUB_MANAGER']);
   const data = driverSchema.parse(raw);
   assertPointAccess(actor, data.deliveryPointId);
+  const settings = await getSettings(db);
   return db.$transaction(async (tx) => {
-    const d = await tx.driver.create({ data });
+    // كل سائق له ملف وظيفي (بيانات شخصية، وثائق، حضور، مستحقات)
+    const emp = await createEmployeeForDriver(tx, data, settings.timezone);
+    const linked = await tx.driver.findUnique({ where: { employeeId: emp.id }, select: { id: true } });
+    if (linked) throw Errors.conflict('يوجد سائق مسجل بنفس رقم الهوية');
+    const d = await tx.driver.create({ data: { ...data, employeeId: emp.id } });
     await writeAudit(tx, actor, { action: 'driver.create', entityType: 'driver', entityId: d.id, after: d });
     return d;
   });
@@ -213,7 +219,12 @@ export async function updateDriver(db: Db, actor: Actor, id: string, raw: unknow
       const open = await tx.driverCustody.aggregate({ where: { driverId: id }, _sum: { quantity: true } });
       if ((open._sum.quantity ?? 0) > 0) throw Errors.conflict('لا يمكن نقل سائق لديه عهدة مفتوحة إلى نقطة أخرى. قم بالتسوية أولاً');
     }
+    if (data.status && data.status !== 'INACTIVE' && before.employeeId) {
+      const emp = await tx.employee.findUnique({ where: { id: before.employeeId }, select: { status: true } });
+      if (emp && emp.status !== 'ACTIVE') throw Errors.conflict('الملف الوظيفي لهذا السائق موقوف أو منتهٍ. أعد تفعيله من شاشة الموظفين أولاً');
+    }
     const d = await tx.driver.update({ where: { id }, data });
+    await syncEmployeeFromDriver(tx, before, data);
     await writeAudit(tx, actor, { action: 'driver.update', entityType: 'driver', entityId: id, before, after: d });
     return d;
   });
