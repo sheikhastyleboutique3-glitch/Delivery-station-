@@ -132,9 +132,12 @@ Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 (RTL) · PostgreSQL · P
 
    | المفتاح | القيمة |
    |---|---|
-   | `DATABASE_URL` | الرابط مع Pooling من Neon |
-   | `DIRECT_URL` | الرابط بدون Pooling |
-   | `AUTH_SECRET` | المفتاح من الخطوة 2 |
+   | `DATABASE_URL` | الرابط مع Pooling من Neon (فيه `-pooler`) |
+   | `AUTH_SECRET` | المفتاح من الخطوة 2 (32 حرفاً على الأقل) |
+   | `DIRECT_URL` | اختياري: الرابط بدون Pooling. إذا تُرك يُستنتج تلقائياً بحذف `-pooler` |
+   | `SEED_ADMIN_EMAIL` + `SEED_ADMIN_PASSWORD` | اختياري: يُنشأ حساب المدير أثناء النشر إذا لم يكن موجوداً (بدون بيانات تجريبية، وكلمة المرور لا تتغير في النشرات التالية) |
+
+   إذا نقص متغير ضروري، يتوقف البناء برسالة واضحة تذكر ما الذي يجب إضافته.
 
 4. اضغط **Deploy**. بعد دقائق يظهر رابط مثل `https://rasd-xxxx.netlify.app`، وهو رابط HTTPS، والكاميرا تحتاج HTTPS لتعمل.
 5. افتح الرابط وسجّل الدخول.
