@@ -16,7 +16,8 @@ import {
 import { localDate } from '@/lib/hr/util';
 import { getSettings } from '@/lib/settings';
 import { createDriver } from '@/lib/services/master-data';
-import { deliver, dispatch, returnToWarehouse, stockIn } from '@/lib/services/stock-ops';
+import { customerReturn, deliver, dispatch, returnToWarehouse, stockIn } from '@/lib/services/stock-ops';
+import { reconcile } from '@/lib/services/reconcile';
 import { getAlerts } from '@/lib/services/alerts';
 import { actorOf, fixture, key, prisma, rejects, setSetting } from './helpers';
 
@@ -338,5 +339,130 @@ describe('الوثائق', () => {
 
     await deleteDocument(prisma, h.A.admin, doc.id);
     expect(await prisma.employeeDocumentFile.count({ where: { documentId: doc.id } })).toBe(0);
+  });
+});
+
+describe('مرتجع العميل يلغي عمولة السائق', () => {
+  const ret = (h: Awaited<ReturnType<typeof hrFixture>>, deliveryOperationId: string | null, qty: number, condition: 'GOOD' | 'DAMAGED' = 'GOOD') =>
+    customerReturn(prisma, h.A.keeper, {
+      idempotencyKey: key(),
+      receivingPointId: h.point.id,
+      deliveryOperationId,
+      lines: [{ productId: h.product.id, quantity: qty, condition, reason: 'العميل رفض المنتج' }],
+    });
+
+  it('سلّم 10 × 200 = 2000، أرجع العميل 3 ← يُلغى 600 والمستحق 1400', async () => {
+    const h = await hrFixture({ stock: 20 });
+    await dispatchTo(h, 10);
+    const d = await deliverQty(h, 10);
+    const r = await ret(h, d.operation.id, 3);
+    expect(r.operation.customer?.id).toBe(h.customer.id);
+    expect(r.operation.driver?.id).toBe(h.driver.id);
+    const rev = await prisma.deliveryEarning.findMany({ where: { employeeId: h.emp.id, kind: 'RETURN_REVERSAL' } });
+    expect(rev).toHaveLength(1);
+    expect(rev[0]).toMatchObject({ quantity: 3, sourceOperationId: d.operation.id, operationId: r.operation.id });
+    expect(rev[0].amount.toString()).toBe('600');
+    const calc = await calculatePayout(prisma, h.emp.id, h.monthStart, h.today, h.settings);
+    expect(calc).toMatchObject({ commissionCents: 200_000, reversalCents: 60_000, returnedUnits: 3, grossCents: 140_000 });
+    expect((await reconcile(prisma)).ok).toBe(true);
+  });
+
+  it('الإلغاء بنفس سعر وقت التسليم حتى لو تغيّر السعر بعدها', async () => {
+    const h = await hrFixture({ stock: 5 });
+    await dispatchTo(h, 2);
+    const d = await deliverQty(h, 2); // 200 للقطعة
+    await setSetting('defaultRatePerUnit', 350);
+    try {
+      await ret(h, d.operation.id, 1);
+    } finally {
+      await setSetting('defaultRatePerUnit', 200);
+    }
+    const rev = await prisma.deliveryEarning.findFirstOrThrow({ where: { employeeId: h.emp.id, kind: 'RETURN_REVERSAL' } });
+    expect(rev.amount.toString()).toBe('200');
+  });
+
+  it('لا يمكن إرجاع أكثر مما سُلّم في السند (على مرتين)، ولا منتج خارج السند', async () => {
+    const h = await hrFixture({ stock: 10 });
+    await dispatchTo(h, 4);
+    const d = await deliverQty(h, 4);
+    await ret(h, d.operation.id, 3);
+    const e = await rejects(ret(h, d.operation.id, 2));
+    expect(e.messageAr).toMatch(/سُلّم 4 وأُرجع سابقاً 3، والمتبقي 1/);
+    const other = await prisma.product.create({ data: { name: 'آخر', sku: `O-${nid()}`, barcode: `O-${nid()}`, category: 'x', price: 1, cost: 1 } });
+    const e2 = await rejects(
+      customerReturn(prisma, h.A.keeper, {
+        idempotencyKey: key(),
+        receivingPointId: h.point.id,
+        deliveryOperationId: d.operation.id,
+        lines: [{ productId: other.id, quantity: 1, condition: 'GOOD', reason: 'x' }],
+      }),
+    );
+    expect(e2.messageAr).toMatch(/غير موجود في سند التسليم/);
+    const total = await prisma.deliveryEarning.aggregate({ where: { employeeId: h.emp.id, kind: 'RETURN_REVERSAL' }, _sum: { units: true } });
+    expect(total._sum.units).toBe(3);
+  });
+
+  it('مرتجعان متزامنان على آخر قطعة في السند: ينجح واحد فقط وتُلغى عمولة قطعة واحدة', async () => {
+    const h = await hrFixture({ stock: 3 });
+    await dispatchTo(h, 1);
+    const d = await deliverQty(h, 1);
+    const results = await Promise.allSettled([ret(h, d.operation.id, 1), ret(h, d.operation.id, 1), ret(h, d.operation.id, 1)]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(await prisma.deliveryEarning.count({ where: { employeeId: h.emp.id, kind: 'RETURN_REVERSAL' } })).toBe(1);
+  });
+
+  it('لكل طرد: الإرجاع الجزئي لا يلغي عمولة الطرد، والإرجاع الكامل يلغيها مرة واحدة', async () => {
+    const h = await hrFixture({ stock: 10, mode: 'PER_COLIS' });
+    await dispatchTo(h, 3);
+    const d = await deliverQty(h, 3);
+    await ret(h, d.operation.id, 2);
+    expect(await prisma.deliveryEarning.count({ where: { employeeId: h.emp.id, kind: 'RETURN_REVERSAL' } })).toBe(0);
+    await ret(h, d.operation.id, 1, 'DAMAGED');
+    const rev = await prisma.deliveryEarning.findMany({ where: { employeeId: h.emp.id, kind: 'RETURN_REVERSAL' } });
+    expect(rev).toHaveLength(1);
+    expect(rev[0].amount.toString()).toBe('200');
+    const calc = await calculatePayout(prisma, h.emp.id, h.monthStart, h.today, h.settings);
+    expect(calc.grossCents).toBe(0);
+  });
+
+  it('سائق براتب شهري فقط: لا عمولة فلا إلغاء', async () => {
+    const h = await hrFixture({ stock: 5, payType: 'MONTHLY_OR_DAILY', monthly: 30000 });
+    await dispatchTo(h, 2);
+    const d = await deliverQty(h, 2);
+    await ret(h, d.operation.id, 2);
+    expect(await prisma.deliveryEarning.count({ where: { employeeId: h.emp.id } })).toBe(0);
+  });
+
+  it('مرتجع بعد دفع الكشف يُطرح من الكشف التالي، ويظهر في الكشف', async () => {
+    const h = await hrFixture({ stock: 20 });
+    await dispatchTo(h, 10);
+    const d1 = await deliverQty(h, 5);
+    const p1 = await createPayout(prisma, h.A.admin, { employeeId: h.emp.id, from: h.monthStart, to: h.today });
+    await addPayment(prisma, h.A.admin, p1.id, { idempotencyKey: key(), amount: 1000, method: 'CASH' });
+    await deliverQty(h, 5); // 1000
+    await ret(h, d1.operation.id, 2); // −400 من تسليم سابق مدفوع
+    // نفس الفترة مغطاة بالكشف الأول: إعادة حسابه تضيف التسليم الجديد والإلغاء
+    const r = await updatePayout(prisma, h.A.admin, p1.id, {});
+    expect(r).toMatchObject({ commissionAmount: '2000', reversalAmount: '400', returnedUnits: 2, netAmount: '1600', status: 'PARTIAL' });
+  });
+
+  it('مرتجعات أكبر من مستحقات الفترة: رسالة واضحة بدل صافٍ سالب', async () => {
+    const h = await hrFixture({ stock: 5 });
+    await dispatchTo(h, 3);
+    const d = await deliverQty(h, 3);
+    const p = await createPayout(prisma, h.A.admin, { employeeId: h.emp.id, from: h.monthStart, to: h.today });
+    await addPayment(prisma, h.A.admin, p.id, { idempotencyKey: key(), amount: 600, method: 'CASH' });
+    await ret(h, d.operation.id, 3);
+    // الإلغاء لم يُدرج بعد في أي كشف: كشف ليوم لاحق لا يوجد (الفترة نفسها مغطاة)، فإعادة حساب الكشف المدفوع ترفض صافياً أقل من المدفوع
+    const e = await rejects(updatePayout(prisma, h.A.admin, p.id, {}));
+    expect(e.messageAr).toMatch(/أكبر من مستحقات هذه الفترة|أقل من المدفوع/);
+  });
+
+  it('مرتجع بدون سند تسليم ما زال يعمل (بدون إلغاء عمولة)', async () => {
+    const h = await hrFixture({ stock: 5 });
+    await dispatchTo(h, 2);
+    await deliverQty(h, 2);
+    await ret(h, null, 1);
+    expect(await prisma.deliveryEarning.count({ where: { employeeId: h.emp.id, kind: 'RETURN_REVERSAL' } })).toBe(0);
   });
 });

@@ -70,8 +70,11 @@ export interface PayoutCalc {
   deliveredUnits: number;
   deliveredColis: number;
   commissionCents: number;
+  /** القطع التي أرجعها العملاء ومجموع العمولة الملغاة عنها (تُطرح) */
+  returnedUnits: number;
+  reversalCents: number;
   earningIds: string[];
-  earningsBreakdown: { rateCents: number; mode: string; quantity: number; units: number; amountCents: number; rateSource: string }[];
+  earningsBreakdown: { kind: 'DELIVERY' | 'RETURN_REVERSAL'; rateCents: number; mode: string; quantity: number; units: number; amountCents: number; rateSource: string }[];
   grossCents: number;
 }
 
@@ -121,11 +124,16 @@ export async function calculatePayout(
     },
     orderBy: { date: 'asc' },
   });
-  const commissionCents = earnings.reduce((s, e) => s + toCents(e.amount), 0);
+  const delivered = earnings.filter((e) => e.kind === 'DELIVERY');
+  const reversals = earnings.filter((e) => e.kind === 'RETURN_REVERSAL');
+  const commissionCents = delivered.reduce((s, e) => s + toCents(e.amount), 0);
+  const reversalCents = reversals.reduce((s, e) => s + toCents(e.amount), 0);
+  const returnedUnits = reversals.reduce((s, e) => s + e.units, 0);
   const groups = new Map<string, PayoutCalc['earningsBreakdown'][number]>();
   for (const e of earnings) {
-    const k = `${e.mode}|${toCents(e.rate)}|${e.rateSource}`;
-    const g = groups.get(k) ?? { rateCents: toCents(e.rate), mode: e.mode, quantity: 0, units: 0, amountCents: 0, rateSource: e.rateSource };
+    const source = e.kind === 'RETURN_REVERSAL' ? 'إلغاء عمولة: مرتجعات العملاء' : e.rateSource;
+    const k = `${e.kind}|${e.mode}|${toCents(e.rate)}|${source}`;
+    const g = groups.get(k) ?? { kind: e.kind, rateCents: toCents(e.rate), mode: e.mode, quantity: 0, units: 0, amountCents: 0, rateSource: source };
     g.quantity += e.quantity;
     g.units += e.units;
     g.amountCents += toCents(e.amount);
@@ -147,9 +155,11 @@ export async function calculatePayout(
     deliveredUnits: att.summary.deliveredUnits,
     deliveredColis: att.summary.deliveredColis,
     commissionCents,
+    returnedUnits,
+    reversalCents,
     earningIds: earnings.map((e) => e.id),
     earningsBreakdown: [...groups.values()],
-    grossCents: baseCents + commissionCents,
+    grossCents: baseCents + commissionCents - reversalCents,
   };
 }
 
@@ -168,6 +178,7 @@ function serializeCalc(c: PayoutCalc) {
     dailyRate: fromCents(c.dailyRateCents),
     baseAmount: fromCents(c.baseCents),
     commissionAmount: fromCents(c.commissionCents),
+    reversalAmount: fromCents(c.reversalCents),
     grossAmount: fromCents(c.grossCents),
     earningsBreakdown: c.earningsBreakdown.map((g) => ({ ...g, rate: fromCents(g.rateCents), amount: fromCents(g.amountCents) })),
   };
@@ -206,6 +217,7 @@ export function serializePayout(p: PayoutRow) {
     dailyRate: p.dailyRate.toString(),
     baseAmount: p.baseAmount.toString(),
     commissionAmount: p.commissionAmount.toString(),
+    reversalAmount: p.reversalAmount.toString(),
     bonusAmount: p.bonusAmount.toString(),
     deductionAmount: p.deductionAmount.toString(),
     netAmount: p.netAmount.toString(),
@@ -217,7 +229,14 @@ export function serializePayout(p: PayoutRow) {
 
 function netOf(calc: PayoutCalc, bonusCents: number, deductionCents: number) {
   const net = calc.grossCents + bonusCents - deductionCents;
-  if (net < 0) throw Errors.validation(`الخصم (${fromCents(deductionCents)}) أكبر من إجمالي المستحق (${fromCents(calc.grossCents + bonusCents)})`);
+  if (net < 0) {
+    if (calc.grossCents < 0) {
+      throw Errors.validation(
+        `عمولات المرتجعات الملغاة (${fromCents(calc.reversalCents)}) أكبر من مستحقات هذه الفترة (${fromCents(calc.baseCents + calc.commissionCents)}). وسّع الفترة لتشمل تسليمات أخرى، أو أضف مكافأة تعويضية`,
+      );
+    }
+    throw Errors.validation(`الخصم (${fromCents(deductionCents)}) أكبر من إجمالي المستحق (${fromCents(calc.grossCents + bonusCents)})`);
+  }
   return net;
 }
 
@@ -253,6 +272,8 @@ async function createOne(tx: Tx, actor: Actor, settings: AppSettings, input: z.i
       deliveredUnits: calc.deliveredUnits,
       deliveredColis: calc.deliveredColis,
       commissionAmount: decimal(calc.commissionCents),
+      returnedUnits: calc.returnedUnits,
+      reversalAmount: decimal(calc.reversalCents),
       bonusAmount: decimal(bonus),
       deductionAmount: decimal(deduction),
       netAmount: decimal(net),
@@ -336,6 +357,8 @@ export async function updatePayout(db: Db, actor: Actor, id: string, raw: unknow
         deliveredUnits: calc.deliveredUnits,
         deliveredColis: calc.deliveredColis,
         commissionAmount: decimal(calc.commissionCents),
+        returnedUnits: calc.returnedUnits,
+        reversalAmount: decimal(calc.reversalCents),
         bonusAmount: decimal(bonus),
         deductionAmount: decimal(deduction),
         netAmount: decimal(net),
@@ -443,7 +466,7 @@ export async function listPayouts(db: Db, actor: Actor, raw: Record<string, stri
   const [total, items, sums] = await Promise.all([
     db.payout.count({ where }),
     db.payout.findMany({ where, include: payoutInclude, orderBy: [{ periodStart: 'desc' }, { payoutNo: 'desc' }], skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
-    db.payout.aggregate({ where, _sum: { netAmount: true, paidAmount: true, commissionAmount: true, baseAmount: true, deliveredUnits: true } }),
+    db.payout.aggregate({ where, _sum: { netAmount: true, paidAmount: true, commissionAmount: true, reversalAmount: true, baseAmount: true, deliveredUnits: true, returnedUnits: true } }),
   ]);
   const net = toCents(sums._sum.netAmount);
   const paid = toCents(sums._sum.paidAmount);
@@ -457,6 +480,8 @@ export async function listPayouts(db: Db, actor: Actor, raw: Record<string, stri
       paid: fromCents(paid),
       remaining: fromCents(net - paid),
       commission: fromCents(toCents(sums._sum.commissionAmount)),
+      reversal: fromCents(toCents(sums._sum.reversalAmount)),
+      returnedUnits: sums._sum.returnedUnits ?? 0,
       base: fromCents(toCents(sums._sum.baseAmount)),
       deliveredUnits: sums._sum.deliveredUnits ?? 0,
     },
@@ -470,7 +495,7 @@ export async function getPayout(db: Db, actor: Actor, id: string) {
   const earnings = await db.deliveryEarning.findMany({
     where: { payoutId: id },
     orderBy: { date: 'asc' },
-    include: { operation: { select: { id: true, opNo: true } } },
+    include: { operation: { select: { id: true, opNo: true } }, sourceOperation: { select: { id: true, opNo: true } } },
   });
   return {
     ...serializePayout(p),
@@ -506,6 +531,8 @@ export async function myEarnings(db: Db, actor: Actor) {
     deliveredColis: s.deliveredColis,
     baseAmount: s.baseAmount,
     commissionAmount: s.commissionAmount,
+    returnedUnits: s.returnedUnits,
+    reversalAmount: s.reversalAmount,
     grossAmount: s.grossAmount,
     earningsBreakdown: s.earningsBreakdown,
     payouts: payouts.map((p) => ({

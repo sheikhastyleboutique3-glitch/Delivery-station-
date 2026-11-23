@@ -133,6 +133,8 @@ export const customerReturnSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
   receivingPointId: idSchema,
   customerId: idSchema.optional().nullable(),
+  /** سند التسليم الأصلي: يحدد السائق الذي تُلغى عمولته ويمنع إرجاع أكثر مما سُلّم */
+  deliveryOperationId: idSchema.optional().nullable(),
   lines: lines(
     z.object({
       ...lineBase,

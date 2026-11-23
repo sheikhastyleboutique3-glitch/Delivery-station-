@@ -205,6 +205,8 @@ export async function listMovements(db: Db, actor: Actor, raw: Record<string, st
 
 export const operationQuerySchema = z.object({
   kind: z.enum(OPERATION_KINDS).optional(),
+  customerId: z.string().max(64).optional(),
+  q: z.string().trim().max(40).optional(),
   driverId: z.string().max(64).optional(),
   status: z.enum(['COMPLETED', 'PENDING_DRIVER_ACK', 'ACKNOWLEDGED']).optional(),
   page: pageSchema,
@@ -217,6 +219,8 @@ export async function listOperations(db: Db, actor: Actor, raw: Record<string, s
   if (q.kind) where.kind = q.kind;
   if (q.status) where.status = q.status;
   if (q.driverId) where.driverId = q.driverId;
+  if (q.customerId) where.customerId = q.customerId;
+  if (q.q) where.opNo = { contains: q.q.toUpperCase() };
   if (actor.role === 'DRIVER') where.driverId = actor.driverId ?? '__none__';
   else {
     const scope = scopedPointId(actor);

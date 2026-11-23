@@ -19,8 +19,10 @@ interface MyEarnings {
   deliveredColis: number;
   baseAmount: string;
   commissionAmount: string;
+  returnedUnits: number;
+  reversalAmount: string;
   grossAmount: string;
-  earningsBreakdown: { mode: string; quantity: number; rate: string; amount: string }[];
+  earningsBreakdown: { kind: string; mode: string; quantity: number; rate: string; amount: string }[];
   payouts: { id: string; periodStart: string; periodEnd: string; netAmount: string; remainingAmount: string; status: PayoutStatus }[];
 }
 
@@ -156,11 +158,15 @@ export default function DriverHome() {
           </dl>
           <ul className="mt-3 space-y-1 text-sm">
             {earnings.data.earningsBreakdown.map((g, i) => (
-              <li key={i} className="flex justify-between gap-2">
+              <li key={i} className={`flex justify-between gap-2 ${g.kind === 'RETURN_REVERSAL' ? 'text-red-700' : ''}`}>
                 <span>
+                  {g.kind === 'RETURN_REVERSAL' ? 'مرتجع عميل: ' : ''}
                   {f.n(g.quantity)} {g.mode === 'PER_COLIS' ? 'طرد' : 'قطعة'} × {f.money(g.rate)}
                 </span>
-                <span className="font-bold tabular-nums">{f.money(g.amount)}</span>
+                <span className="font-bold tabular-nums">
+                  {g.kind === 'RETURN_REVERSAL' ? '− ' : ''}
+                  {f.money(g.amount)}
+                </span>
               </li>
             ))}
             {Number(earnings.data.baseAmount) > 0 && (

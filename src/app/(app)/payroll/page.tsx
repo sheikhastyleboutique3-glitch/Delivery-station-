@@ -64,7 +64,7 @@ function Sheets() {
   const [busy, setBusy] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ created: string[]; skipped: { employee: string; reason: string }[] } | null>(null);
   const range = monthOf(month);
-  const { data, error, loading, reload } = useApi<Paged<PayoutRow> & { totals: { net: string; paid: string; remaining: string; commission: string; base: string; deliveredUnits: number } }>(
+  const { data, error, loading, reload } = useApi<Paged<PayoutRow> & { totals: { net: string; paid: string; remaining: string; commission: string; reversal: string; base: string; deliveredUnits: number; returnedUnits: number } }>(
     `/api/payroll${qs({ ...range, status, page, pageSize: 50 })}`,
   );
 
@@ -110,7 +110,7 @@ function Sheets() {
         <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
           {[
             ['أجر الأيام', f.money(data.totals.base), 'bg-slate-50'],
-            ['عمولات التوصيل', f.money(data.totals.commission), 'bg-green-50 text-green-900'],
+            ['العمولات بعد المرتجعات', f.money(Number(data.totals.commission) - Number(data.totals.reversal)), 'bg-green-50 text-green-900'],
             ['إجمالي الصافي', f.money(data.totals.net), 'bg-slate-900 text-white'],
             ['المدفوع', f.money(data.totals.paid), 'bg-green-100 text-green-900'],
             ['المتبقي', f.money(data.totals.remaining), 'bg-amber-100 text-amber-900'],
@@ -137,6 +137,7 @@ function Sheets() {
               <Th>قطع / طرود</Th>
               <Th>أجر الأيام</Th>
               <Th>العمولة</Th>
+              <Th>مرتجعات</Th>
               <Th>الصافي</Th>
               <Th>المدفوع</Th>
               <Th>المتبقي</Th>
@@ -160,6 +161,7 @@ function Sheets() {
                 </Td>
                 <Td className="tabular-nums">{f.money(p.baseAmount)}</Td>
                 <Td className="tabular-nums">{f.money(p.commissionAmount)}</Td>
+                <Td className="tabular-nums text-red-700">{Number(p.reversalAmount) > 0 ? `− ${f.money(p.reversalAmount)} (${f.n(p.returnedUnits)})` : '—'}</Td>
                 <Td className="font-bold tabular-nums">{f.money(p.netAmount)}</Td>
                 <Td className="tabular-nums">{f.money(p.paidAmount)}</Td>
                 <Td className="tabular-nums">{f.money(p.remainingAmount)}</Td>

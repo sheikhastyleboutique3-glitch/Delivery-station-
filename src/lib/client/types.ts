@@ -123,6 +123,8 @@ export interface Operation {
   acknowledgedBy?: { id: string; name: string } | null;
   movements?: Movement[];
   settlement?: { summary: Record<string, number | string | null> } | null;
+  sourceOperation?: { id: string; opNo: string; kind: OperationKind } | null;
+  returns?: { id: string; opNo: string; createdAt: string }[];
   _count?: { movements: number };
 }
 
@@ -284,9 +286,11 @@ export interface PayoutCalcView {
   deliveredUnits: number;
   deliveredColis: number;
   commissionAmount: string;
+  returnedUnits: number;
+  reversalAmount: string;
   grossAmount: string;
   earningsCount: number;
-  earningsBreakdown: { rate: string; mode: CommissionMode; quantity: number; units: number; amount: string; rateSource: string }[];
+  earningsBreakdown: { kind: 'DELIVERY' | 'RETURN_REVERSAL'; rate: string; mode: CommissionMode; quantity: number; units: number; amount: string; rateSource: string }[];
   overlapping?: { id: string; payoutNo: string } | null;
 }
 
@@ -315,6 +319,8 @@ export interface PayoutRow {
   deliveredUnits: number;
   deliveredColis: number;
   commissionAmount: string;
+  returnedUnits: number;
+  reversalAmount: string;
   bonusAmount: string;
   deductionAmount: string;
   netAmount: string;
@@ -326,5 +332,18 @@ export interface PayoutRow {
   employee: { id: string; fullName: string; employeeNo: string; jobType: EmployeeJob; payType: PayType; deliveryPoint?: { name: string } | null };
   payments: PayoutPaymentRow[];
   createdBy?: { name: string };
-  earnings?: { id: string; date: string; mode: CommissionMode; category: string | null; quantity: number; units: number; rate: string; amount: string; rateSource: string; operation: { id: string; opNo: string } }[];
+  earnings?: {
+    id: string;
+    date: string;
+    kind: 'DELIVERY' | 'RETURN_REVERSAL';
+    mode: CommissionMode;
+    category: string | null;
+    quantity: number;
+    units: number;
+    rate: string;
+    amount: string;
+    rateSource: string;
+    operation: { id: string; opNo: string };
+    sourceOperation: { id: string; opNo: string } | null;
+  }[];
 }

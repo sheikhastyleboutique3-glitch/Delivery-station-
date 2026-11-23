@@ -304,7 +304,7 @@ async function main() {
       { productId: P('كابل USB-C').id, quantity: 10 },
     ],
   });
-  await deliver(prisma, hubA, {
+  const dlvNorth = await deliver(prisma, hubA, {
     idempotencyKey: key('dlv-north'),
     driverId: mohammed.id,
     customerId: customers[4].id,
@@ -325,7 +325,7 @@ async function main() {
   await customerReturn(prisma, hubA, {
     idempotencyKey: key('crt'),
     receivingPointId: north.id,
-    customerId: customers[4].id,
+    deliveryOperationId: dlvNorth.operation.id, // يلغي عمولة القطعة المرتجعة من مستحقات محمد
     lines: [{ productId: P('كابل USB-C').id, quantity: 1, condition: 'DAMAGED', reason: 'الكابل لا يشحن' }],
   });
   // فرز جزء من البنفسجي في الشمال
@@ -366,8 +366,9 @@ async function main() {
     process.exitCode = 1;
   }
 
-  const earned = await prisma.deliveryEarning.aggregate({ _sum: { amount: true, units: true } });
-  console.log(`✓ عمولات التوصيل المسجلة تلقائياً: ${earned._sum.units ?? 0} قطعة = ${earned._sum.amount ?? 0} دج`);
+  const earned = await prisma.deliveryEarning.aggregate({ where: { kind: 'DELIVERY' }, _sum: { amount: true, units: true } });
+  const reversed = await prisma.deliveryEarning.aggregate({ where: { kind: 'RETURN_REVERSAL' }, _sum: { amount: true, units: true } });
+  console.log(`✓ عمولات التوصيل: ${earned._sum.units ?? 0} قطعة = ${earned._sum.amount ?? 0} دج، ملغاة بسبب مرتجعات العملاء: ${reversed._sum.units ?? 0} قطعة = ${reversed._sum.amount ?? 0} دج`);
   const totals = await prisma.stockColorBalance.groupBy({ by: ['color'], _sum: { quantity: true } });
   console.log('الأرصدة حسب اللون:', Object.fromEntries(totals.map((t) => [t.color, t._sum.quantity])));
   console.log('\nحسابات الدخول التجريبية (غيّر كلمات المرور بعد أول دخول):');

@@ -107,6 +107,12 @@ enum CommissionMode {
   PER_COLIS
 }
 
+/// DELIVERY = عمولة تسليم، RETURN_REVERSAL = إلغاء عمولة بسبب مرتجع عميل (يُطرح من المستحقات)
+enum EarningKind {
+  DELIVERY
+  RETURN_REVERSAL
+}
+
 enum AttendanceStatus {
   PRESENT
   ABSENT
@@ -369,6 +375,8 @@ model Operation {
   performedById     String          @map("performed_by")
   acknowledgedAt    DateTime?       @map("acknowledged_at") @db.Timestamptz(3)
   acknowledgedById  String?         @map("acknowledged_by")
+  /// لمرتجع العميل: سند التسليم الأصلي الذي يُرجَع منه
+  sourceOperationId String?         @map("source_operation_id")
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
   deliveryPoint   DeliveryPoint?    @relation("OperationPoint", fields: [deliveryPointId], references: [id])
@@ -380,10 +388,14 @@ model Operation {
   movements       StockMovement[]
   settlement      Settlement?
   earnings        DeliveryEarning[]
+  sourceOperation Operation?        @relation("OperationSource", fields: [sourceOperationId], references: [id])
+  returns         Operation[]       @relation("OperationSource")
+  reversedBy      DeliveryEarning[] @relation("EarningSourceOperation")
 
   @@index([kind, createdAt])
   @@index([driverId, createdAt])
   @@index([status])
+  @@index([sourceOperationId])
   @@map("operations")
 }
 
@@ -626,30 +638,35 @@ model DeliveryRate {
 
 /// عمولة توصيل محسوبة لحظة التسليم بالسعر المعتمد وقتها (لا تتغير إذا تغيّر السعر لاحقاً)
 model DeliveryEarning {
-  id          String         @id @default(cuid())
-  employeeId  String         @map("employee_id")
-  driverId    String         @map("driver_id")
-  operationId String         @map("operation_id")
-  date        DateTime       @db.Date
-  mode        CommissionMode
-  category    String?
+  id                String         @id @default(cuid())
+  employeeId        String         @map("employee_id")
+  driverId          String         @map("driver_id")
+  operationId       String         @map("operation_id")
+  kind              EarningKind    @default(DELIVERY)
+  /// لسطر الإلغاء: سند التسليم الأصلي الذي أُلغيت عمولته
+  sourceOperationId String?        @map("source_operation_id")
+  date              DateTime       @db.Date
+  mode              CommissionMode
+  category          String?
   /// عدد القطع (PER_UNIT) أو 1 للطرد (PER_COLIS)
-  quantity    Int
-  units       Int
-  rate        Decimal        @db.Decimal(14, 2)
-  amount      Decimal        @db.Decimal(14, 2)
-  rateSource  String         @map("rate_source")
-  payoutId    String?        @map("payout_id")
-  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  quantity          Int
+  units             Int
+  rate              Decimal        @db.Decimal(14, 2)
+  amount            Decimal        @db.Decimal(14, 2)
+  rateSource        String         @map("rate_source")
+  payoutId          String?        @map("payout_id")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  employee  Employee  @relation(fields: [employeeId], references: [id])
-  driver    Driver    @relation(fields: [driverId], references: [id])
-  operation Operation @relation(fields: [operationId], references: [id])
-  payout    Payout?   @relation(fields: [payoutId], references: [id])
+  employee        Employee   @relation(fields: [employeeId], references: [id])
+  driver          Driver     @relation(fields: [driverId], references: [id])
+  operation       Operation  @relation(fields: [operationId], references: [id])
+  sourceOperation Operation? @relation("EarningSourceOperation", fields: [sourceOperationId], references: [id])
+  payout          Payout?    @relation(fields: [payoutId], references: [id])
 
   @@index([employeeId, date])
   @@index([payoutId])
   @@index([operationId])
+  @@index([sourceOperationId])
   @@map("delivery_earnings")
 }
 
@@ -669,6 +686,9 @@ model Payout {
   deliveredUnits   Int          @map("delivered_units")
   deliveredColis   Int          @map("delivered_colis")
   commissionAmount Decimal      @map("commission_amount") @db.Decimal(14, 2)
+  /// عدد القطع التي أرجعها العملاء بعد تسليمها، ومجموع العمولة الملغاة عنها
+  returnedUnits    Int          @default(0) @map("returned_units")
+  reversalAmount   Decimal      @default(0) @map("reversal_amount") @db.Decimal(14, 2)
   bonusAmount      Decimal      @default(0) @map("bonus_amount") @db.Decimal(14, 2)
   deductionAmount  Decimal      @default(0) @map("deduction_amount") @db.Decimal(14, 2)
   netAmount        Decimal      @map("net_amount") @db.Decimal(14, 2)

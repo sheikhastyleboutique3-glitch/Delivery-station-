@@ -36,7 +36,8 @@ export function CalcBreakdown({ c, bonus = 0, deduction = 0 }: { c: PayoutCalcVi
   const commission = Number(c.commissionAmount);
   const b = isRow ? Number((c as PayoutRow).bonusAmount) : bonus;
   const d = isRow ? Number((c as PayoutRow).deductionAmount) : deduction;
-  const net = isRow ? Number((c as PayoutRow).netAmount) : base + commission + b - d;
+  const reversal = Number(c.reversalAmount ?? 0);
+  const net = isRow ? Number((c as PayoutRow).netAmount) : base + commission - reversal + b - d;
   const breakdown = 'earningsBreakdown' in c ? c.earningsBreakdown : null;
   const hasBase = c.payType !== 'PER_DELIVERY';
   const hasCommission = c.payType !== 'MONTHLY_OR_DAILY' || commission > 0;
@@ -67,9 +68,9 @@ export function CalcBreakdown({ c, bonus = 0, deduction = 0 }: { c: PayoutCalcVi
             </span>
             <b className="tabular-nums">{f.money(commission)}</b>
           </div>
-          {breakdown && breakdown.length > 0 && (
+          {breakdown && breakdown.filter((g) => g.kind !== 'RETURN_REVERSAL').length > 0 && (
             <ul className="mt-2 space-y-1 text-xs text-green-900">
-              {breakdown.map((g, i) => (
+              {breakdown.filter((g) => g.kind !== 'RETURN_REVERSAL').map((g, i) => (
                 <li key={i} className="flex flex-wrap justify-between gap-2">
                   <span>
                     {f.n(g.quantity)} {g.mode === 'PER_COLIS' ? 'طرد' : 'قطعة'} × {f.money(g.rate)} <span className="text-green-700">({g.rateSource})</span>
@@ -79,6 +80,22 @@ export function CalcBreakdown({ c, bonus = 0, deduction = 0 }: { c: PayoutCalcVi
               ))}
             </ul>
           )}
+        </div>
+      )}
+      {reversal > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 p-3 text-red-900">
+          <span>
+            إلغاء عمولة مرتجعات العملاء: {f.n(c.returnedUnits)} قطعة
+            {breakdown && (
+              <span className="block text-xs">
+                {breakdown
+                  .filter((g) => g.kind === 'RETURN_REVERSAL')
+                  .map((g) => `${f.n(g.quantity)} ${g.mode === 'PER_COLIS' ? 'طرد' : 'قطعة'} × ${f.money(g.rate)}`)
+                  .join(' + ')}
+              </span>
+            )}
+          </span>
+          <b className="tabular-nums">− {f.money(reversal)}</b>
         </div>
       )}
       {(b > 0 || d > 0) && (
@@ -247,23 +264,30 @@ export function PayoutDetailModal({ id, onClose, onChanged }: { id: string; onCl
                   </tr>
                 </thead>
                 <tbody>
-                  {p.earnings.map((e) => (
-                    <tr key={e.id}>
-                      <Td className="whitespace-nowrap text-xs">{f.ymd(e.date)}</Td>
-                      <Td>
-                        <Link href={`/ops/${e.operation.id}`} className="ltr font-mono text-xs font-bold text-blue-700 underline">
-                          {e.operation.opNo}
-                        </Link>
-                      </Td>
-                      <Td className="text-xs">
-                        {COMMISSION_MODE_LABELS[e.mode]}
-                        {e.category ? ` · ${e.category}` : ''}
-                      </Td>
-                      <Td className="tabular-nums">{f.n(e.quantity)}</Td>
-                      <Td className="tabular-nums">{f.money(e.rate)}</Td>
-                      <Td className="font-bold tabular-nums">{f.money(e.amount)}</Td>
-                    </tr>
-                  ))}
+                  {p.earnings.map((e) => {
+                    const rev = e.kind === 'RETURN_REVERSAL';
+                    return (
+                      <tr key={e.id} className={rev ? 'bg-red-50 text-red-900' : ''}>
+                        <Td className="whitespace-nowrap text-xs">{f.ymd(e.date)}</Td>
+                        <Td>
+                          <Link href={`/ops/${e.operation.id}`} className="ltr font-mono text-xs font-bold text-blue-700 underline">
+                            {e.operation.opNo}
+                          </Link>
+                          {rev && e.sourceOperation && <span className="block text-[11px]">إلغاء من تسليم {e.sourceOperation.opNo}</span>}
+                        </Td>
+                        <Td className="text-xs">
+                          {rev ? 'مرتجع عميل' : COMMISSION_MODE_LABELS[e.mode]}
+                          {e.category ? ` · ${e.category}` : ''}
+                        </Td>
+                        <Td className="tabular-nums">{f.n(e.quantity)}</Td>
+                        <Td className="tabular-nums">{f.money(e.rate)}</Td>
+                        <Td className="font-bold tabular-nums">
+                          {rev ? '− ' : ''}
+                          {f.money(e.amount)}
+                        </Td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </Table>
             </Card>
