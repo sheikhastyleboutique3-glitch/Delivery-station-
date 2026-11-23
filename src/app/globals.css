@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: var(--font-cairo), ui-sans-serif, system-ui, 'Segoe UI', Tahoma, sans-serif;
+  --color-brand-50: #f1f5f9;
+  --color-brand-900: #0f172a;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  /* الأرقام والرموز (SKU، باركود، هاتف) تبقى من اليسار لليمين داخل صفحة RTL */
+  .ltr {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+
+/* الحاوية التي يرسم فيها html5-qrcode الفيديو */
+#rasd-camera-reader video {
+  border-radius: 12px;
+  width: 100% !important;
+  object-fit: cover;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  .print-area {
+    box-shadow: none !important;
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  @page {
+    margin: 10mm;
+  }
+}

@@ -1,0 +1,37 @@
+# تشغيل كامل محلياً أو على خادم: docker compose up -d --build
+# ثم البيانات الأولية مرة واحدة: docker compose exec app npm run db:seed
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rasd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rasd-change-me}
+      POSTGRES_DB: rasd
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rasd -d rasd']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://rasd:${POSTGRES_PASSWORD:-rasd-change-me}@db:5432/rasd?schema=public
+      DIRECT_URL: postgresql://rasd:${POSTGRES_PASSWORD:-rasd-change-me}@db:5432/rasd?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?ضع AUTH_SECRET في ملف .env بجانب docker-compose.yml}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_DEMO: ${SEED_DEMO:-true}
+    ports:
+      - '3000:3000'
+
+volumes:
+  pgdata:

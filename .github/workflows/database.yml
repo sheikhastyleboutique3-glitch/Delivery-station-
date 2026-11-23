@@ -1,0 +1,59 @@
+# أدوات قاعدة البيانات بدون أي سطر أوامر:
+# - تشغيل يدوي من تبويب Actions لتطبيق الـ migrations وإدخال البيانات الأولية.
+# - فحص يومي تلقائي لتطابق الأرصدة وسلامة سجل التدقيق (GitHub يرسل لك بريداً إذا فشل).
+# يحتاج أسرار المستودع: DATABASE_URL و DIRECT_URL (واختيارياً SEED_ADMIN_EMAIL و SEED_ADMIN_PASSWORD).
+name: Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'المهمة'
+        required: true
+        default: seed
+        type: choice
+        options: [seed, reconcile]
+      demo:
+        description: 'إضافة بيانات تجريبية (منتجات وسائقون وحركات)'
+        required: true
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+  schedule:
+    - cron: '0 2 * * *' # يومياً 02:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+    steps:
+      - name: التحقق من الأسرار
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$DIRECT_URL" ]; then
+            echo "::error::أضف DATABASE_URL و DIRECT_URL في Settings > Secrets and variables > Actions"; exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: تطبيق الـ migrations
+        run: npx prisma migrate deploy
+      - name: البيانات الأولية
+        if: github.event_name == 'workflow_dispatch' && inputs.task == 'seed'
+        env:
+          SEED_ADMIN_EMAIL: ${{ secrets.SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}
+          SEED_DEMO: ${{ inputs.demo }}
+        run: npm run db:seed
+      - name: فحص تطابق الأرصدة
+        run: npm run reconcile
+      - name: فحص سلامة سجل التدقيق
+        run: npm run audit:verify

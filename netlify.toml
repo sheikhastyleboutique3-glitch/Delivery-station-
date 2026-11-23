@@ -1,0 +1,8 @@
+# Netlify (الخطة المجانية تسمح بالاستخدام التجاري). Next.js يُكتشف تلقائياً عبر OpenNext adapter.
+[build]
+  command = "npm run deploy-build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NEXT_TELEMETRY_DISABLED = "1"
