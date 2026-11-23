@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "deploy-build": "prisma generate && prisma migrate deploy && next build",
+    "deploy-build": "tsx scripts/deploy-build.ts",
     "vercel-build": "npm run deploy-build",
     "start": "next start",
     "postinstall": "prisma generate",

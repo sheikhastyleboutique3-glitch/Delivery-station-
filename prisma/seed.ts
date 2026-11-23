@@ -15,6 +15,10 @@ import { createEmployee, changeEmployeeStatus } from '../src/lib/hr/employees';
 import { markAttendance } from '../src/lib/hr/attendance';
 import { addPayment, createPayout, upsertRate } from '../src/lib/hr/payroll';
 import { localDate } from '../src/lib/hr/util';
+import { ensureDirectUrl } from '../src/lib/env';
+import { passwordSchema } from '../src/lib/validation';
+
+ensureDirectUrl();
 import {
   customerReturn,
   deliver,
@@ -56,8 +60,12 @@ async function main() {
     await prisma.setting.upsert({ where: { key: k }, create: { key: k, value: v }, update: {} });
   }
 
+  if (process.env.SEED_ADMIN_PASSWORD && !passwordSchema.safeParse(adminPassword).success) {
+    throw new Error('SEED_ADMIN_PASSWORD is too weak: at least 8 characters with letters and digits');
+  }
+  const existed = await prisma.user.findUnique({ where: { email: adminEmail }, select: { id: true } });
   const admin = await upsertUser(adminEmail, 'مدير النظام', adminPassword, 'ADMIN');
-  console.log(`✓ حساب المدير: ${adminEmail}`);
+  console.log(existed ? `• Admin account already exists (password unchanged): ${adminEmail}` : `✓ Admin account created: ${adminEmail}`);
   const adminActor = actorOf(admin);
 
   if (!demo) {

@@ -3,6 +3,7 @@ import { COLORS, MOVEMENT_TYPES, TRANSITIONS, ean13CheckDigit, findTransition, i
 import { latinFromKeyEvent, normalizeCode } from '@/components/scanner/keymap';
 import { toCsv } from '@/lib/services/reports';
 import { canonicalJson } from '@/lib/audit';
+import { deriveDirectUrl, maskUrl } from '@/lib/env';
 
 describe('مصفوفة الانتقالات', () => {
   it('تسمح بالمسارات الأساسية بالأدوار الصحيحة', () => {
@@ -89,5 +90,17 @@ describe('التصدير', () => {
 
   it('JSON ثابت الترتيب للتجزئة', () => {
     expect(canonicalJson({ b: 1, a: { d: [2, 1], c: null } })).toBe('{"a":{"c":null,"d":[2,1]},"b":1}');
+  });
+});
+
+describe('Deploy environment', () => {
+  it('derives the Neon direct URL from the pooled one', () => {
+    expect(deriveDirectUrl('postgresql://u:p@ep-cool-123-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require&pgbouncer=true')).toBe(
+      'postgresql://u:p@ep-cool-123.eu-central-1.aws.neon.tech/neondb?sslmode=require',
+    );
+    expect(deriveDirectUrl('postgresql://rasd:rasd@localhost:5432/rasd')).toBe('postgresql://rasd:rasd@localhost:5432/rasd');
+  });
+  it('never prints the database password', () => {
+    expect(maskUrl('postgresql://user:s3cret@host.neon.tech/db?sslmode=require')).toBe('postgresql://user:****@host.neon.tech/db');
   });
 });
