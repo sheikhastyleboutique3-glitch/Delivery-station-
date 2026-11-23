@@ -3,7 +3,7 @@ import { COLORS, MOVEMENT_TYPES, TRANSITIONS, ean13CheckDigit, findTransition, i
 import { latinFromKeyEvent, normalizeCode } from '@/components/scanner/keymap';
 import { toCsv } from '@/lib/services/reports';
 import { canonicalJson } from '@/lib/audit';
-import { deriveDirectUrl, maskUrl } from '@/lib/env';
+import { deriveDirectUrl, maskUrl, resolveDatabaseEnv, sessionSecret } from '@/lib/env';
 
 describe('مصفوفة الانتقالات', () => {
   it('تسمح بالمسارات الأساسية بالأدوار الصحيحة', () => {
@@ -102,5 +102,29 @@ describe('Deploy environment', () => {
   });
   it('never prints the database password', () => {
     expect(maskUrl('postgresql://user:s3cret@host.neon.tech/db?sslmode=require')).toBe('postgresql://user:****@host.neon.tech/db');
+  });
+});
+
+describe('Hosting integrations', () => {
+  const pooled = 'postgresql://u:p@ep-x-pooler.eu-central-1.aws.neon.tech/db?sslmode=require';
+  it('accepts the database URL under the names Netlify / Vercel set', () => {
+    expect(resolveDatabaseEnv({ NETLIFY_DATABASE_URL: pooled, NETLIFY_DATABASE_URL_UNPOOLED: 'postgresql://u:p@direct/db' })).toMatchObject({
+      databaseUrl: pooled,
+      databaseUrlSource: 'NETLIFY_DATABASE_URL',
+      directUrl: 'postgresql://u:p@direct/db',
+    });
+    expect(resolveDatabaseEnv({ NETLIFY_DB_URL: pooled })).toMatchObject({ databaseUrlSource: 'NETLIFY_DB_URL', directUrlSource: 'derived from NETLIFY_DB_URL' });
+    expect(resolveDatabaseEnv({ DATABASE_URL: ' ', POSTGRES_PRISMA_URL: pooled }).databaseUrlSource).toBe('POSTGRES_PRISMA_URL');
+    expect(resolveDatabaseEnv({}).databaseUrl).toBeNull();
+  });
+  it('session key: AUTH_SECRET when set, otherwise stable key derived from the database URL', async () => {
+    const a = await sessionSecret({ DATABASE_URL: pooled });
+    const b = await sessionSecret({ DATABASE_URL: pooled });
+    const c = await sessionSecret({ DATABASE_URL: pooled.replace(':p@', ':other@') });
+    expect(a?.source).toBe('derived');
+    expect(Buffer.from(a!.key).equals(Buffer.from(b!.key))).toBe(true);
+    expect(Buffer.from(a!.key).equals(Buffer.from(c!.key))).toBe(false);
+    expect((await sessionSecret({ AUTH_SECRET: 'x'.repeat(40), DATABASE_URL: pooled }))?.source).toBe('AUTH_SECRET');
+    expect(await sessionSecret({})).toBeNull();
   });
 });

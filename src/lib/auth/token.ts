@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from 'jose';
 import type { Role } from '../domain';
+import { sessionSecret } from '../env';
 
 /** يعمل في Node وفي proxy.ts (لا يستورد Prisma) */
 
@@ -14,14 +15,15 @@ export interface SessionClaims {
   tv: number; // token version
 }
 
-let cachedKey: Uint8Array | null = null;
-function secretKey(): Uint8Array {
-  if (cachedKey) return cachedKey;
-  const secret = process.env.AUTH_SECRET;
-  if (!secret || secret.length < 32) {
-    throw new Error('AUTH_SECRET غير مضبوط أو أقصر من 32 حرفاً. أضفه في متغيرات البيئة.');
-  }
-  cachedKey = new TextEncoder().encode(secret);
+let cachedKey: Promise<Uint8Array> | null = null;
+async function secretKey(): Promise<Uint8Array> {
+  cachedKey ??= sessionSecret().then((r) => {
+    if (!r) {
+      cachedKey = null;
+      throw new Error('No AUTH_SECRET and no database URL configured: cannot sign sessions.');
+    }
+    return r.key;
+  });
   return cachedKey;
 }
 
@@ -38,13 +40,13 @@ export async function signSession(claims: SessionClaims): Promise<string> {
     .setIssuer('rasd')
     .setAudience('rasd')
     .setExpirationTime(`${sessionHours()}h`)
-    .sign(secretKey());
+    .sign(await secretKey());
 }
 
 export async function verifySession(token: string | undefined | null): Promise<SessionClaims | null> {
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secretKey(), { issuer: 'rasd', audience: 'rasd', algorithms: ['HS256'] });
+    const { payload } = await jwtVerify(token, await secretKey(), { issuer: 'rasd', audience: 'rasd', algorithms: ['HS256'] });
     if (!payload.sub) return null;
     return {
       sub: payload.sub,

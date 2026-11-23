@@ -1,8 +1,8 @@
 import { PrismaClient } from '@prisma/client';
-import { ensureDirectUrl } from './env';
+import { applyDatabaseEnv } from './env';
 
-// DIRECT_URL is optional in production: derived from DATABASE_URL if missing
-ensureDirectUrl();
+// Accept DATABASE_URL, NETLIFY_DB_URL, NETLIFY_DATABASE_URL, POSTGRES_PRISMA_URL...; DIRECT_URL is derived if missing
+applyDatabaseEnv();
 
 // نسخة واحدة من العميل لكل عملية Node (مهم في وضع التطوير و Serverless).
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };

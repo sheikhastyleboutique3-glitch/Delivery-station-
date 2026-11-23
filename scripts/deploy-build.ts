@@ -9,7 +9,7 @@
  * 5. Builds the Next.js app.
  */
 import { spawnSync } from 'node:child_process';
-import { deriveDirectUrl, maskUrl } from '../src/lib/env';
+import { applyDatabaseEnv, maskUrl } from '../src/lib/env';
 import { passwordSchema } from '../src/lib/validation';
 
 type Env = Record<string, string | undefined>;
@@ -23,28 +23,29 @@ function step(title: string) {
 // ─── 1) Environment checks ──────────────────────────────────────
 step('Checking environment variables');
 
-const db = env.DATABASE_URL?.trim();
-if (!db) {
-  problems.push('DATABASE_URL is not set. Add your Neon connection string (the one with "-pooler") in Netlify → Site configuration → Environment variables.');
-} else if (!/^postgres(ql)?:\/\//.test(db)) {
-  problems.push('DATABASE_URL must start with postgresql:// (copy it from Neon → Connect).');
+const resolved = applyDatabaseEnv(env);
+if (!resolved.databaseUrl) {
+  problems.push(
+    [
+      'No database is connected. Do ONE of these in Netlify, then redeploy:',
+      '      a) Add an environment variable DATABASE_URL = your Neon connection string (Neon → Connect, the one with "-pooler"), or',
+      '      b) Connect a database with Netlify\'s Neon / Netlify DB integration (it sets NETLIFY_DATABASE_URL / NETLIFY_DB_URL automatically).',
+    ].join('\n'),
+  );
+} else if (!/^postgres(ql)?:\/\//.test(resolved.databaseUrl)) {
+  problems.push(`${resolved.databaseUrlSource} must start with postgresql:// (copy it from Neon → Connect).`);
 } else {
-  console.log(`  DATABASE_URL = ${maskUrl(db)}`);
-  if (!env.DIRECT_URL?.trim()) {
-    env.DIRECT_URL = deriveDirectUrl(db);
-    console.log(`  DIRECT_URL was not set → derived from DATABASE_URL: ${maskUrl(env.DIRECT_URL)}`);
-  } else {
-    console.log(`  DIRECT_URL   = ${maskUrl(env.DIRECT_URL)}`);
-  }
+  console.log(`  Database     = ${maskUrl(resolved.databaseUrl)}  (from ${resolved.databaseUrlSource})`);
+  console.log(`  Direct URL   = ${maskUrl(resolved.directUrl!)}  (${resolved.directUrlSource})`);
 }
 
-const secret = env.AUTH_SECRET ?? '';
-if (secret.length < 32) {
-  problems.push(
-    `AUTH_SECRET is ${secret ? `only ${secret.length} characters` : 'not set'}. It must be a random string of at least 32 characters (48+ recommended), otherwise nobody can log in.`,
-  );
-} else {
+const secret = env.AUTH_SECRET?.trim() ?? '';
+if (secret && secret.length < 32) {
+  problems.push(`AUTH_SECRET is only ${secret.length} characters. Use at least 32 (48+ recommended), or delete it to use the automatic key.`);
+} else if (secret) {
   console.log(`  AUTH_SECRET  = set (${secret.length} characters)`);
+} else if (resolved.databaseUrl) {
+  console.log('  AUTH_SECRET  = not set → sessions are signed with a key derived from the database credentials (works; setting AUTH_SECRET is still recommended)');
 }
 
 const seedEmail = env.SEED_ADMIN_EMAIL?.trim();
@@ -63,7 +64,7 @@ if (wantsSeed) {
 if (problems.length) {
   console.error('\n✗ The build cannot continue:\n');
   for (const p of problems) console.error(`  • ${p}`);
-  console.error('\nFix these in Netlify → Site configuration → Environment variables, then trigger a new deploy.\n');
+  console.error('\nNetlify → Site configuration → Environment variables, then Deploys → Trigger deploy.\n');
   process.exit(1);
 }
 

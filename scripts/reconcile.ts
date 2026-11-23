@@ -1,5 +1,8 @@
 /** فحص تطابق الأرصدة مع سجل الحركات من سطر الأوامر: npm run reconcile */
 import { PrismaClient } from '@prisma/client';
+import { applyDatabaseEnv } from '../src/lib/env';
+
+applyDatabaseEnv();
 import { reconcile } from '../src/lib/services/reconcile';
 
 const prisma = new PrismaClient();

@@ -1,5 +1,8 @@
 /** فحص سلامة سلسلة سجل التدقيق: npm run audit:verify */
 import { PrismaClient } from '@prisma/client';
+import { applyDatabaseEnv } from '../src/lib/env';
+
+applyDatabaseEnv();
 import { verifyAuditChain } from '../src/lib/audit';
 
 const prisma = new PrismaClient();
