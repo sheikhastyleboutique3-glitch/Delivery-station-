@@ -81,16 +81,18 @@ async function main() {
     return;
   }
 
-  // ─── نقاط الدليفري ───
-  const wh = await prisma.deliveryPoint.create({
-    data: { code: 'WH-MAIN', name: 'المستودع الرئيسي', type: 'WAREHOUSE', address: 'الجزائر العاصمة، المنطقة الصناعية الرغاية', phone: '+213560000001' },
-  });
-  const north = await prisma.deliveryPoint.create({
-    data: { code: 'HUB-ORAN', name: 'نقطة وهران', type: 'HUB', address: 'وهران، حي العقيد لطفي', phone: '+213560000002' },
-  });
-  const south = await prisma.deliveryPoint.create({
-    data: { code: 'HUB-BLIDA', name: 'نقطة البليدة', type: 'HUB', address: 'البليدة، طريق الجزائر', phone: '+213560000003' },
-  });
+  // ─── نقاط الدليفري (تُعاد استخدامها إن وُجدت، مثل المستودع الرئيسي الذي يُنشأ مع حساب المدير) ───
+  const ensurePoint = async (d: { code: string; name: string; type: 'WAREHOUSE' | 'HUB'; address: string; phone: string }) => {
+    const existing = await prisma.deliveryPoint.findFirst({ where: { OR: [{ code: d.code }, { name: d.name }] } });
+    if (!existing) return prisma.deliveryPoint.create({ data: d });
+    return prisma.deliveryPoint.update({
+      where: { id: existing.id },
+      data: { address: existing.address ?? d.address, phone: existing.phone ?? d.phone, isActive: true },
+    });
+  };
+  const wh = await ensurePoint({ code: 'WH-MAIN', name: 'المستودع الرئيسي', type: 'WAREHOUSE', address: 'الجزائر العاصمة، المنطقة الصناعية الرغاية', phone: '+213560000001' });
+  const north = await ensurePoint({ code: 'HUB-ORAN', name: 'نقطة وهران', type: 'HUB', address: 'وهران، حي العقيد لطفي', phone: '+213560000002' });
+  const south = await ensurePoint({ code: 'HUB-BLIDA', name: 'نقطة البليدة', type: 'HUB', address: 'البليدة، طريق الجزائر', phone: '+213560000003' });
   console.log('✓ 3 نقاط دليفري');
 
   // ─── المستخدمون ───
@@ -101,7 +103,10 @@ async function main() {
   const tz = (await prisma.setting.findUnique({ where: { key: 'timezone' } }))?.value as string | undefined;
   const today = localDate(new Date(), tz ?? DEFAULT_SETTINGS.timezone);
   const inDays = (n: number) => localDate(new Date(Date.now() + n * 86_400_000), tz ?? DEFAULT_SETTINGS.timezone);
-  const mkEmp = (data: Record<string, unknown>) => createEmployee(prisma, adminActor, { hireDate: '2026-01-05', nationality: 'جزائرية', ...data });
+  // يعيد استخدام الموظف إن وُجد بنفس رقم الهوية (إعادة تشغيل آمنة بعد فشل جزئي)
+  const mkEmp = async (data: Record<string, unknown>) =>
+    (await prisma.employee.findUnique({ where: { nationalId: String(data.nationalId) } })) ??
+    createEmployee(prisma, adminActor, { hireDate: '2026-01-05', nationality: 'جزائرية', ...data });
 
   const eAhmed = await mkEmp({
     fullName: 'أحمد بن علي', phone: '+213550100001', altPhone: '+213660100001', nationalId: '109870012345678', idExpiryDate: inDays(20),
@@ -137,7 +142,7 @@ async function main() {
   });
   const driverOf = async (empId: string) => prisma.driver.findUniqueOrThrow({ where: { employeeId: empId } });
   const [ahmed, khaled, mohammed] = await Promise.all([driverOf(eAhmed.id), driverOf(eKhaled.id), driverOf(eMohammed.id)]);
-  await changeEmployeeStatus(prisma, adminActor, eOmar.id, { status: 'SUSPENDED', terminationReason: 'في عطلة مرضية' });
+  if (eOmar.status === 'ACTIVE') await changeEmployeeStatus(prisma, adminActor, eOmar.id, { status: 'SUSPENDED', terminationReason: 'في عطلة مرضية' });
   const driverUser = await upsertUser('driver@rasd.local', 'أحمد بن علي', 'Driver@12345', 'DRIVER', wh.id);
   await prisma.driver.update({ where: { id: ahmed.id }, data: { userId: driverUser.id } });
   console.log('✓ 7 موظفين (4 سائقين بأنظمة دفع مختلفة، أمين مستودع، مسؤولة نقطة، محاسبة) + 4 حسابات دخول');
@@ -155,7 +160,7 @@ async function main() {
       { name: 'يوسف بلقاسم', phone: '+213551230004', address: 'باب الزوار، حي الجرف، شقة 12' },
       { name: 'صيدلية الشفاء', phone: '+213041230005', address: 'وهران، شارع العربي بن مهيدي' },
       { name: 'مريم بوعلام', phone: '+213551230006', address: 'البليدة، حي بن بولعيد', deliveryNotes: 'لا يوجد مصعد' },
-    ].map((c) => prisma.customer.create({ data: c })),
+    ].map(async (c) => (await prisma.customer.findFirst({ where: { phone: c.phone } })) ?? prisma.customer.create({ data: c })),
   );
   console.log('✓ 6 عملاء');
 
