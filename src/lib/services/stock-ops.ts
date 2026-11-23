@@ -25,6 +25,8 @@ import {
   transferSchema,
 } from '../validation';
 import type { Role } from '../domain';
+import { recordDeliveryActivity, recordDispatchActivity } from '../hr/activity';
+import { recordCustomerReturnReversal, returnableFor } from '../hr/returns';
 
 const STAFF: Role[] = ['ADMIN', 'WAREHOUSE', 'HUB_MANAGER'];
 
@@ -114,6 +116,10 @@ export async function dispatch(db: Db, actor: Actor, raw: unknown): Promise<Oper
   await loadActivePoint(db, input.pointId);
   const driver = await loadDriver(db, input.driverId);
   if (driver.status === 'INACTIVE') throw Errors.validation(`السائق "${driver.fullName}" غير نشط ولا يمكن الصرف له`);
+  if (driver.employeeId) {
+    const emp = await db.employee.findUnique({ where: { id: driver.employeeId }, select: { status: true } });
+    if (emp && emp.status !== 'ACTIVE') throw Errors.validation(`ملف السائق "${driver.fullName}" الوظيفي موقوف أو منتهٍ ولا يمكن الصرف له`);
+  }
   if (driver.deliveryPointId !== input.pointId && actor.role !== 'ADMIN') {
     throw Errors.validation(`السائق "${driver.fullName}" لا يتبع هذه النقطة. الصرف لسائق من نقطة أخرى يحتاج صلاحية مدير النظام`);
   }
@@ -149,7 +155,11 @@ export async function dispatch(db: Db, actor: Actor, raw: unknown): Promise<Oper
         });
       }
     },
-    (tx) => refreshDriverStatus(tx, driver.id),
+    async (tx) => {
+      await refreshDriverStatus(tx, driver.id);
+      // حضور تلقائي: استلام بضاعة للتوصيل = يوم عمل
+      await recordDispatchActivity(tx, driver.id, input.lines.reduce((s, l) => s + l.quantity, 0));
+    },
   );
 }
 
@@ -227,6 +237,12 @@ export async function deliver(db: Db, actor: Actor, raw: unknown): Promise<Opera
           });
         }
       }
+      // حضور تلقائي + عدد القطع والطرود المسلّمة + عمولة التوصيل بالسعر المعتمد الآن
+      await recordDeliveryActivity(tx, {
+        driverId: driver.id,
+        operationId: ctx.operationId,
+        lines: input.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+      });
     },
     (tx) => refreshDriverStatus(tx, driver.id),
   );
@@ -351,14 +367,24 @@ export async function resolveRed(db: Db, actor: Actor, raw: unknown): Promise<Op
 }
 
 // ─── 8) مرتجع من عميل: أخضر ← بنفسجي أو أحمر ──────────────────
+// مع سند التسليم الأصلي: لا يُرجَع أكثر مما سُلّم، وتُلغى عمولة السائق عن القطع المرتجعة.
 
 export async function customerReturn(db: Db, actor: Actor, raw: unknown): Promise<OperationResult> {
   requireRole(actor, STAFF);
   const input = customerReturnSchema.parse(raw);
   assertPointAccess(actor, input.receivingPointId);
   await loadActivePoint(db, input.receivingPointId, 'نقطة الاستلام');
-  if (input.customerId) {
-    const c = await db.customer.findUnique({ where: { id: input.customerId }, select: { id: true } });
+  let customerId = input.customerId ?? null;
+  let driverId: string | null = null;
+  if (input.deliveryOperationId) {
+    const delivery = await db.operation.findUnique({ where: { id: input.deliveryOperationId }, select: { kind: true, customerId: true, driverId: true } });
+    if (!delivery || delivery.kind !== 'DELIVERY') throw Errors.notFound('سند التسليم');
+    if (customerId && delivery.customerId && customerId !== delivery.customerId) throw Errors.validation('العميل المحدد ليس عميل سند التسليم هذا');
+    customerId = delivery.customerId;
+    driverId = delivery.driverId;
+  }
+  if (customerId) {
+    const c = await db.customer.findUnique({ where: { id: customerId }, select: { id: true } });
     if (!c) throw Errors.notFound('العميل');
   }
   const products = await loadProducts(db, input.lines.map((l) => l.productId), { forbidArchived: false });
@@ -371,27 +397,100 @@ export async function customerReturn(db: Db, actor: Actor, raw: unknown): Promis
       idempotencyKey: input.idempotencyKey,
       request: input,
       deliveryPointId: input.receivingPointId,
-      customerId: input.customerId ?? null,
+      customerId,
+      driverId,
+      sourceOperationId: input.deliveryOperationId ?? null,
       notes: input.notes,
     },
     async (tx, ctx) => {
-      for (const l of inLockOrder(input.lines)) {
-        await applyMovement(tx, ctx, {
-          type: 'CUSTOMER_RETURN',
-          product: products.get(l.productId)!,
-          quantity: l.quantity,
-          fromColor: 'GREEN',
-          fromPointId: l.fromPointId ?? input.receivingPointId,
-          toColor: l.condition === 'GOOD' ? 'PURPLE' : 'RED',
-          toPointId: input.receivingPointId,
-          customerId: input.customerId ?? null,
-          unitSerials: l.unitSerials,
-          scannedBarcode: l.scannedBarcode,
-          scanSource: l.scanSource,
-          reason: l.reason,
-          notes: l.notes,
-        });
+      if (!input.deliveryOperationId) {
+        // مرتجع بدون سند تسليم (حالات قديمة): لا يمكن معرفة السائق، فلا تُلغى أي عمولة
+        for (const l of inLockOrder(input.lines)) {
+          await applyMovement(tx, ctx, {
+            type: 'CUSTOMER_RETURN',
+            product: products.get(l.productId)!,
+            quantity: l.quantity,
+            fromColor: 'GREEN',
+            fromPointId: l.fromPointId ?? input.receivingPointId,
+            toColor: l.condition === 'GOOD' ? 'PURPLE' : 'RED',
+            toPointId: input.receivingPointId,
+            customerId,
+            unitSerials: l.unitSerials,
+            scannedBarcode: l.scannedBarcode,
+            scanSource: l.scanSource,
+            reason: l.reason,
+            notes: l.notes,
+          });
+        }
+        return;
       }
+
+      // قفل سند التسليم: مرتجعان متزامنان من نفس الطلب لا يتجاوزان الكمية المسلّمة
+      await tx.$queryRaw`SELECT id FROM operations WHERE id = ${input.deliveryOperationId} FOR UPDATE`;
+      const { lines: returnable } = await returnableFor(tx, input.deliveryOperationId);
+      const left = new Map(returnable.map((r) => [r.productId, { ...r, byPoint: r.byPoint.map((b) => ({ ...b })) }]));
+
+      // نفس المنتج قد يظهر في أكثر من سطر (جزء سليم وجزء تالف)
+      const asked = new Map<string, number>();
+      for (const l of input.lines) asked.set(l.productId, (asked.get(l.productId) ?? 0) + l.quantity);
+      for (const [productId, qty] of asked) {
+        const r = left.get(productId);
+        const name = products.get(productId)!.name;
+        if (!r) throw Errors.validation(`المنتج "${name}" غير موجود في سند التسليم هذا`);
+        if (qty > r.remaining) {
+          throw Errors.insufficient(`لا يمكن إرجاع ${qty} من "${name}": سُلّم ${r.delivered} وأُرجع سابقاً ${r.returned}، والمتبقي ${r.remaining}`, {
+            productId,
+            delivered: r.delivered,
+            returned: r.returned,
+            remaining: r.remaining,
+          });
+        }
+      }
+
+      for (const l of input.lines) {
+        const r = left.get(l.productId)!;
+        const foreign = l.unitSerials.filter((x) => !r.serialsRemaining.includes(x));
+        if (foreign.length) throw Errors.validation(`قطع ليست ضمن هذا التسليم أو أُرجعت سابقاً: ${foreign.join('، ')}`);
+      }
+
+      for (const l of inLockOrder(input.lines)) {
+        const product = products.get(l.productId)!;
+        const r = left.get(l.productId)!;
+        // المصدر: النقطة التي سُجّل فيها الأخضر لهذا التسليم
+        let qtyLeft = l.quantity;
+        const serials = l.unitSerials;
+        for (const b of r.byPoint) {
+          if (qtyLeft === 0) break;
+          const take = Math.min(qtyLeft, b.remaining);
+          if (take === 0) continue;
+          b.remaining -= take;
+          qtyLeft -= take;
+          await applyMovement(tx, ctx, {
+            type: 'CUSTOMER_RETURN',
+            product,
+            quantity: take,
+            fromColor: 'GREEN',
+            fromPointId: b.pointId,
+            toColor: l.condition === 'GOOD' ? 'PURPLE' : 'RED',
+            toPointId: input.receivingPointId,
+            customerId,
+            driverId,
+            unitSerials: product.trackUnits ? serials.splice(0, take) : [],
+            scannedBarcode: l.scannedBarcode,
+            scanSource: l.scanSource,
+            reason: l.reason,
+            notes: l.notes,
+          });
+        }
+      }
+
+      const totalLeft = returnable.reduce((s, r) => s + r.remaining, 0) - input.lines.reduce((s, l) => s + l.quantity, 0);
+      await recordCustomerReturnReversal(tx, {
+        deliveryOperationId: input.deliveryOperationId,
+        returnOperationId: ctx.operationId,
+        lines: [...asked.entries()].map(([productId, quantity]) => ({ productId, quantity })),
+        fullyReturned: totalLeft === 0,
+      });
     },
   );
 }

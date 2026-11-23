@@ -7,11 +7,15 @@ type Reader = Db | Prisma.TransactionClient;
 
 export const settingsSchema = z.object({
   companyName: z.string().trim().min(1, 'اسم الشركة مطلوب').max(80),
+  defaultRatePerUnit: z.number().positive('سعر التوصيل يجب أن يكون أكبر من صفر').max(10_000_000),
+  defaultRatePerColis: z.number().positive('سعر التوصيل يجب أن يكون أكبر من صفر').max(10_000_000),
+  standardWorkDays: z.number().int().min(1, 'أيام العمل بين 1 و 31').max(31, 'أيام العمل بين 1 و 31'),
+  documentExpiryAlertDays: z.number().int().min(1).max(365),
   autoRestockGoodReturns: z.boolean(),
   redAlertHours: z.number().int().min(1).max(24 * 30),
   custodyAlertHours: z.number().int().min(1).max(24 * 30),
   pendingAckAlertHours: z.number().int().min(1).max(24 * 7),
-  currency: z.string().trim().regex(/^[A-Z]{3}$/, 'رمز العملة يجب أن يكون 3 أحرف إنجليزية كبيرة مثل QAR'),
+  currency: z.string().trim().regex(/^[A-Z]{3}$/, 'رمز العملة يجب أن يكون 3 أحرف إنجليزية كبيرة مثل DZD'),
   timezone: z.string().trim().refine((tz) => {
     try {
       new Intl.DateTimeFormat('en', { timeZone: tz });

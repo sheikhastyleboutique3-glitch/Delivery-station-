@@ -35,7 +35,8 @@ const phoneSchema = z
   .regex(/^[+\d][\d\s-]*$/, 'رقم الهاتف يحتوي رموزاً غير مسموحة');
 
 const optionalPhone = z
-  .union([phoneSchema, z.literal(''), z.null(), z.undefined()])
+  .union([phoneSchema, z.literal(''), z.null()])
+  .optional()
   .transform((v) => (v ? v : null));
 
 const serialsSchema = z.array(z.string().trim().min(1).max(100)).max(5000).default([]);
@@ -132,6 +133,8 @@ export const customerReturnSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
   receivingPointId: idSchema,
   customerId: idSchema.optional().nullable(),
+  /** سند التسليم الأصلي: يحدد السائق الذي تُلغى عمولته ويمنع إرجاع أكثر مما سُلّم */
+  deliveryOperationId: idSchema.optional().nullable(),
   lines: lines(
     z.object({
       ...lineBase,
@@ -197,7 +200,8 @@ export const productSchema = z.object({
   minStockAlert: z.coerce.number().int('حد التنبيه عدد صحيح').min(0).max(1_000_000).default(0),
   trackUnits: z.boolean().default(false),
   imageUrl: z
-    .union([z.url('رابط الصورة غير صحيح').max(500), z.literal(''), z.null(), z.undefined()])
+    .union([z.url('رابط الصورة غير صحيح').max(500), z.literal(''), z.null()])
+    .optional()
     .transform((v) => (v ? v : null)),
 });
 export const productUpdateSchema = productSchema.partial().extend({ isArchived: z.boolean().optional() });

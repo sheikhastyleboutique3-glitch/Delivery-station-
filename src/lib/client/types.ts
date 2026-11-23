@@ -1,4 +1,19 @@
-import type { DriverStatus, MovementType, OperationKind, Role, ScanSource, StockColor } from '../domain';
+import type {
+  AttendanceStatus,
+  CommissionMode,
+  DocumentType,
+  DriverStatus,
+  EmployeeJob,
+  EmployeeStatus,
+  MovementType,
+  OperationKind,
+  PayType,
+  PaymentMethod,
+  PayoutStatus,
+  Role,
+  ScanSource,
+  StockColor,
+} from '../domain';
 
 export interface Paged<T> {
   items: T[];
@@ -108,6 +123,8 @@ export interface Operation {
   acknowledgedBy?: { id: string; name: string } | null;
   movements?: Movement[];
   settlement?: { summary: Record<string, number | string | null> } | null;
+  sourceOperation?: { id: string; opNo: string; kind: OperationKind } | null;
+  returns?: { id: string; opNo: string; createdAt: string }[];
   _count?: { movements: number };
 }
 
@@ -150,4 +167,183 @@ export interface Alert {
   title: string;
   message: string;
   href: string;
+}
+
+// ─── HR ─────────────────────────────────────────────────────────
+
+export interface EmployeeDoc {
+  id: string;
+  employeeId: string;
+  type: DocumentType;
+  title: string | null;
+  docNumber: string | null;
+  issueDate: string | null;
+  expiryDate: string | null;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+  uploadedBy?: { name: string };
+}
+
+export interface Employee {
+  id: string;
+  employeeNo: string;
+  fullName: string;
+  phone: string;
+  altPhone: string | null;
+  address: string | null;
+  dateOfBirth: string | null;
+  nationality: string | null;
+  notes: string | null;
+  nationalId: string;
+  idExpiryDate: string | null;
+  jobType: EmployeeJob;
+  jobTitle: string | null;
+  deliveryPointId: string | null;
+  hireDate: string;
+  status: EmployeeStatus;
+  terminationDate: string | null;
+  terminationReason: string | null;
+  drivingLicenseNumber: string | null;
+  drivingLicenseExpiry: string | null;
+  payType: PayType;
+  monthlySalary: string;
+  dailyRate: string | null;
+  workDaysPerMonth: number | null;
+  commissionMode: CommissionMode;
+  deliveryPoint?: { id: string; name: string } | null;
+  driver?: {
+    id: string;
+    status: DriverStatus;
+    vehicleType?: string | null;
+    vehiclePlate: string | null;
+    user?: { id: string; email: string; isActive: boolean } | null;
+    deliveryPoint?: { id: string; name: string };
+  } | null;
+  documents?: EmployeeDoc[];
+  rates?: DeliveryRateRow[];
+  driverStats?: Record<string, number> | null;
+  custody?: number;
+  photoId?: string | null;
+  documentsCount?: number;
+  nearestExpiry?: string | null;
+}
+
+export interface AttendanceLogRow {
+  id: string;
+  date: string;
+  status: AttendanceStatus;
+  source: 'AUTO_DISPATCH' | 'AUTO_DELIVERY' | 'MANUAL';
+  receivedUnits: number;
+  deliveredUnits: number;
+  deliveredColis: number;
+  firstActivityAt: string | null;
+  lastActivityAt: string | null;
+  notes: string | null;
+  setBy?: { name: string } | null;
+}
+
+export interface AttendanceMonth {
+  month: string;
+  today: string;
+  logs: AttendanceLogRow[];
+  summary: {
+    presentDays: number;
+    absentDays: number;
+    leaveDays: number;
+    offDays: number;
+    receivedUnits: number;
+    deliveredUnits: number;
+    deliveredColis: number;
+  };
+}
+
+export interface DeliveryRateRow {
+  id: string;
+  mode: CommissionMode;
+  amount: string;
+  employeeId: string | null;
+  category: string | null;
+  deliveryPointId: string | null;
+  label: string | null;
+  employee?: { id: string; fullName: string; employeeNo: string } | null;
+  deliveryPoint?: { id: string; name: string } | null;
+}
+
+export interface PayoutCalcView {
+  employeeId: string;
+  from: string;
+  to: string;
+  payType: PayType;
+  commissionMode: CommissionMode;
+  monthlySalary: string;
+  dailyRate: string;
+  dailyRateIsCustom: boolean;
+  standardDays: number;
+  workedDays: number;
+  baseAmount: string;
+  deliveredUnits: number;
+  deliveredColis: number;
+  commissionAmount: string;
+  returnedUnits: number;
+  reversalAmount: string;
+  grossAmount: string;
+  earningsCount: number;
+  earningsBreakdown: { kind: 'DELIVERY' | 'RETURN_REVERSAL'; rate: string; mode: CommissionMode; quantity: number; units: number; amount: string; rateSource: string }[];
+  overlapping?: { id: string; payoutNo: string } | null;
+}
+
+export interface PayoutPaymentRow {
+  id: string;
+  amount: string;
+  method: PaymentMethod;
+  reference: string | null;
+  note: string | null;
+  paidAt: string;
+  createdBy?: { name: string };
+}
+
+export interface PayoutRow {
+  id: string;
+  payoutNo: string;
+  employeeId: string;
+  periodStart: string;
+  periodEnd: string;
+  payType: PayType;
+  monthlySalary: string;
+  dailyRate: string;
+  standardDays: number;
+  workedDays: number;
+  baseAmount: string;
+  deliveredUnits: number;
+  deliveredColis: number;
+  commissionAmount: string;
+  returnedUnits: number;
+  reversalAmount: string;
+  bonusAmount: string;
+  deductionAmount: string;
+  netAmount: string;
+  paidAmount: string;
+  remainingAmount: string;
+  status: PayoutStatus;
+  notes: string | null;
+  createdAt: string;
+  employee: { id: string; fullName: string; employeeNo: string; jobType: EmployeeJob; payType: PayType; deliveryPoint?: { name: string } | null };
+  payments: PayoutPaymentRow[];
+  createdBy?: { name: string };
+  earnings?: {
+    id: string;
+    date: string;
+    kind: 'DELIVERY' | 'RETURN_REVERSAL';
+    mode: CommissionMode;
+    category: string | null;
+    quantity: number;
+    units: number;
+    rate: string;
+    amount: string;
+    rateSource: string;
+    operation: { id: string; opNo: string };
+    sourceOperation: { id: string; opNo: string } | null;
+  }[];
 }

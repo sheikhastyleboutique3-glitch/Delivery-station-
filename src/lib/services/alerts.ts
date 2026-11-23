@@ -2,8 +2,10 @@ import type { Db } from '../db';
 import type { Actor } from '../actor';
 import { scopedPointId } from '../actor';
 import { getSettings } from '../settings';
+import { DOCUMENT_TYPE_LABELS } from '../domain';
+import { dbDate, localDate, ymdOf } from '../hr/util';
 
-export type AlertKind = 'LOW_STOCK' | 'RED_PENDING' | 'CUSTODY_OVERDUE' | 'PENDING_ACK';
+export type AlertKind = 'LOW_STOCK' | 'RED_PENDING' | 'CUSTODY_OVERDUE' | 'PENDING_ACK' | 'DOCUMENT_EXPIRY';
 
 export interface Alert {
   kind: AlertKind;
@@ -114,5 +116,58 @@ export async function getAlerts(db: Db, actor: Actor): Promise<Alert[]> {
     });
   }
 
+  // 5) وثائق منتهية أو قاربت على الانتهاء (للمدير فقط لأنها بيانات شخصية)
+  if (actor.role === 'ADMIN') alerts.push(...(await documentExpiryAlerts(db, settings.timezone, settings.documentExpiryAlertDays)));
+
   return alerts;
+}
+
+export async function documentExpiryAlerts(db: Db, timezone: string, days: number): Promise<Alert[]> {
+  const today = localDate(new Date(), timezone);
+  const limit = dbDate(localDate(new Date(Date.now() + days * 86_400_000), timezone));
+  const employees = await db.employee.findMany({
+    where: {
+      status: { not: 'TERMINATED' },
+      OR: [{ idExpiryDate: { lte: limit } }, { drivingLicenseExpiry: { lte: limit } }, { documents: { some: { expiryDate: { lte: limit } } } }],
+    },
+    select: {
+      id: true,
+      fullName: true,
+      idExpiryDate: true,
+      drivingLicenseExpiry: true,
+      documents: { where: { expiryDate: { lte: limit } }, select: { type: true, title: true, expiryDate: true } },
+    },
+    take: 200,
+  });
+  const out: Alert[] = [];
+  const push = (e: { id: string; fullName: string }, what: string, d: Date) => {
+    const ymd = ymdOf(d);
+    const left = Math.round((dbDate(ymd).getTime() - dbDate(today).getTime()) / 86_400_000);
+    out.push({
+      kind: 'DOCUMENT_EXPIRY',
+      severity: left < 0 ? 'danger' : 'warning',
+      title: left < 0 ? 'وثيقة منتهية الصلاحية' : 'وثيقة تقترب من الانتهاء',
+      message: `${what} للموظف ${e.fullName} ${left < 0 ? `انتهت منذ ${-left} يوم` : left === 0 ? 'تنتهي اليوم' : `تنتهي بعد ${left} يوم`} (${ymd})`,
+      href: `/employees/${e.id}?tab=documents`,
+      meta: { employeeId: e.id, date: ymd, daysLeft: left },
+    });
+  };
+  for (const e of employees) {
+    const seen = new Set<string>();
+    if (e.idExpiryDate && e.idExpiryDate <= limit) {
+      push(e, 'بطاقة التعريف', e.idExpiryDate);
+      seen.add(`ID|${ymdOf(e.idExpiryDate)}`);
+    }
+    if (e.drivingLicenseExpiry && e.drivingLicenseExpiry <= limit) {
+      push(e, 'رخصة القيادة', e.drivingLicenseExpiry);
+      seen.add(`DL|${ymdOf(e.drivingLicenseExpiry)}`);
+    }
+    for (const d of e.documents) {
+      const key = `${d.type === 'ID_FRONT' || d.type === 'ID_BACK' ? 'ID' : d.type === 'DRIVING_LICENSE' ? 'DL' : d.type}|${ymdOf(d.expiryDate!)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      push(e, d.title || DOCUMENT_TYPE_LABELS[d.type], d.expiryDate!);
+    }
+  }
+  return out.sort((a, b) => Number(a.meta.daysLeft) - Number(b.meta.daysLeft));
 }

@@ -80,6 +80,75 @@ enum OperationStatus {
   ACKNOWLEDGED
 }
 
+enum EmployeeJob {
+  DRIVER
+  WAREHOUSE_KEEPER
+  HUB_MANAGER
+  ADMINISTRATIVE
+  OTHER
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+/// نظام الدفع: عمولة توصيل / راتب شهري أو يومي / هجين
+enum PayType {
+  PER_DELIVERY
+  MONTHLY_OR_DAILY
+  HYBRID
+}
+
+/// احتساب العمولة: لكل قطعة مسلّمة أو لكل طرد (طلب) مكتمل
+enum CommissionMode {
+  PER_UNIT
+  PER_COLIS
+}
+
+/// DELIVERY = عمولة تسليم، RETURN_REVERSAL = إلغاء عمولة بسبب مرتجع عميل (يُطرح من المستحقات)
+enum EarningKind {
+  DELIVERY
+  RETURN_REVERSAL
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LEAVE
+  OFF
+}
+
+enum AttendanceSource {
+  AUTO_DISPATCH
+  AUTO_DELIVERY
+  MANUAL
+}
+
+enum DocumentType {
+  ID_FRONT
+  ID_BACK
+  PHOTO
+  DRIVING_LICENSE
+  CONTRACT
+  OTHER
+}
+
+enum PayoutStatus {
+  PENDING
+  PARTIAL
+  PAID
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CCP
+  BARIDIMOB
+  OTHER
+}
+
 enum ScanSource {
   CAMERA
   EXTERNAL_SCANNER
@@ -108,6 +177,8 @@ model DeliveryPoint {
   movementsFrom  StockMovement[]     @relation("MovementFromPoint")
   movementsTo    StockMovement[]     @relation("MovementToPoint")
   operationsDest Operation[]         @relation("OperationToPoint")
+  employees      Employee[]
+  deliveryRates  DeliveryRate[]
 
   @@map("delivery_points")
 }
@@ -126,13 +197,17 @@ model User {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  deliveryPoint DeliveryPoint?  @relation(fields: [deliveryPointId], references: [id])
+  deliveryPoint DeliveryPoint?     @relation(fields: [deliveryPointId], references: [id])
   driver        Driver?
-  operations    Operation[]     @relation("OperationPerformedBy")
-  acknowledged  Operation[]     @relation("OperationAcknowledgedBy")
+  operations    Operation[]        @relation("OperationPerformedBy")
+  acknowledged  Operation[]        @relation("OperationAcknowledgedBy")
   movements     StockMovement[]
   settlements   Settlement[]
   auditLogs     AuditLog[]
+  uploadedDocs  EmployeeDocument[]
+  payoutsMade   Payout[]
+  paymentsMade  PayoutPayment[]
+  attendanceSet AttendanceLog[]
 
   @@index([role])
   @@map("users")
@@ -141,6 +216,8 @@ model User {
 model Driver {
   id              String       @id @default(cuid())
   userId          String?      @unique @map("user_id")
+  /// الملف الوظيفي (مصدر البيانات الشخصية والراتب)
+  employeeId      String?      @unique @map("employee_id")
   fullName        String       @map("full_name")
   phone           String
   altPhone        String?      @map("alt_phone")
@@ -155,9 +232,11 @@ model Driver {
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  user          User?           @relation(fields: [userId], references: [id])
-  deliveryPoint DeliveryPoint   @relation(fields: [deliveryPointId], references: [id])
+  user          User?             @relation(fields: [userId], references: [id])
+  employee      Employee?         @relation(fields: [employeeId], references: [id])
+  deliveryPoint DeliveryPoint     @relation(fields: [deliveryPointId], references: [id])
   custody       DriverCustody[]
+  earnings      DeliveryEarning[]
   units         InventoryUnit[]
   operations    Operation[]
   movements     StockMovement[]
@@ -296,20 +375,27 @@ model Operation {
   performedById     String          @map("performed_by")
   acknowledgedAt    DateTime?       @map("acknowledged_at") @db.Timestamptz(3)
   acknowledgedById  String?         @map("acknowledged_by")
+  /// لمرتجع العميل: سند التسليم الأصلي الذي يُرجَع منه
+  sourceOperationId String?         @map("source_operation_id")
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  deliveryPoint   DeliveryPoint?  @relation("OperationPoint", fields: [deliveryPointId], references: [id])
-  toDeliveryPoint DeliveryPoint?  @relation("OperationToPoint", fields: [toDeliveryPointId], references: [id])
-  driver          Driver?         @relation(fields: [driverId], references: [id])
-  customer        Customer?       @relation(fields: [customerId], references: [id])
-  performedBy     User            @relation("OperationPerformedBy", fields: [performedById], references: [id])
-  acknowledgedBy  User?           @relation("OperationAcknowledgedBy", fields: [acknowledgedById], references: [id])
+  deliveryPoint   DeliveryPoint?    @relation("OperationPoint", fields: [deliveryPointId], references: [id])
+  toDeliveryPoint DeliveryPoint?    @relation("OperationToPoint", fields: [toDeliveryPointId], references: [id])
+  driver          Driver?           @relation(fields: [driverId], references: [id])
+  customer        Customer?         @relation(fields: [customerId], references: [id])
+  performedBy     User              @relation("OperationPerformedBy", fields: [performedById], references: [id])
+  acknowledgedBy  User?             @relation("OperationAcknowledgedBy", fields: [acknowledgedById], references: [id])
   movements       StockMovement[]
   settlement      Settlement?
+  earnings        DeliveryEarning[]
+  sourceOperation Operation?        @relation("OperationSource", fields: [sourceOperationId], references: [id])
+  returns         Operation[]       @relation("OperationSource")
+  reversedBy      DeliveryEarning[] @relation("EarningSourceOperation")
 
   @@index([kind, createdAt])
   @@index([driverId, createdAt])
   @@index([status])
+  @@index([sourceOperationId])
   @@map("operations")
 }
 
@@ -414,4 +500,231 @@ model LoginAttempt {
   lockedUntil DateTime? @map("locked_until") @db.Timestamptz(3)
 
   @@map("login_attempts")
+}
+
+// ───────────────────────── HR: الموظفون والحضور والرواتب ─────────────────────────
+
+/// ملف الموظف أو السائق الشامل (كل المبالغ بعملة النظام، الافتراضية الدينار الجزائري DZD)
+model Employee {
+  id                   String         @id @default(cuid())
+  employeeNo           String         @unique @map("employee_no")
+  fullName             String         @map("full_name")
+  phone                String
+  altPhone             String?        @map("alt_phone")
+  address              String?
+  dateOfBirth          DateTime?      @map("date_of_birth") @db.Date
+  nationality          String?
+  notes                String?
+  nationalId           String         @unique @map("national_id")
+  idExpiryDate         DateTime?      @map("id_expiry_date") @db.Date
+  jobType              EmployeeJob    @map("job_type")
+  jobTitle             String?        @map("job_title")
+  deliveryPointId      String?        @map("delivery_point_id")
+  hireDate             DateTime       @map("hire_date") @db.Date
+  status               EmployeeStatus @default(ACTIVE)
+  terminationDate      DateTime?      @map("termination_date") @db.Date
+  terminationReason    String?        @map("termination_reason")
+  drivingLicenseNumber String?        @map("driving_license_number")
+  drivingLicenseExpiry DateTime?      @map("driving_license_expiry") @db.Date
+  // ── نظام الدفع ──
+  payType              PayType        @default(PER_DELIVERY) @map("pay_type")
+  /// الراتب الشهري (للنظام الشهري أو الهجين)
+  monthlySalary        Decimal        @default(0) @map("monthly_salary") @db.Decimal(14, 2)
+  /// أجر اليوم. إذا تُرك فارغاً = الراتب الشهري ÷ أيام العمل المعيارية
+  dailyRate            Decimal?       @map("daily_rate") @db.Decimal(14, 2)
+  /// أيام العمل المعيارية في الشهر لهذا الموظف (فارغ = من الإعدادات)
+  workDaysPerMonth     Int?           @map("work_days_per_month")
+  commissionMode       CommissionMode @default(PER_UNIT) @map("commission_mode")
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  deliveryPoint DeliveryPoint?     @relation(fields: [deliveryPointId], references: [id])
+  driver        Driver?
+  documents     EmployeeDocument[]
+  attendance    AttendanceLog[]
+  earnings      DeliveryEarning[]
+  payouts       Payout[]
+  rates         DeliveryRate[]
+
+  @@index([status])
+  @@index([jobType])
+  @@index([deliveryPointId])
+  @@index([fullName])
+  @@map("employees")
+}
+
+/// وثائق وصور الموظف (البيانات الوصفية). الملف نفسه في employee_document_files
+model EmployeeDocument {
+  id           String       @id @default(cuid())
+  employeeId   String       @map("employee_id")
+  type         DocumentType
+  title        String?
+  docNumber    String?      @map("doc_number")
+  issueDate    DateTime?    @map("issue_date") @db.Date
+  expiryDate   DateTime?    @map("expiry_date") @db.Date
+  fileName     String       @map("file_name")
+  mimeType     String       @map("mime_type")
+  sizeBytes    Int          @map("size_bytes")
+  sha256       String
+  uploadedById String       @map("uploaded_by")
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee   Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  uploadedBy User                  @relation(fields: [uploadedById], references: [id])
+  file       EmployeeDocumentFile?
+
+  @@index([employeeId, type])
+  @@index([expiryDate])
+  @@map("employee_documents")
+}
+
+/// محتوى الملف مخزن في قاعدة البيانات (يعمل على Netlify و Docker دون خدمة تخزين إضافية)
+model EmployeeDocumentFile {
+  documentId String @id @map("document_id")
+  data       Bytes
+
+  document EmployeeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("employee_document_files")
+}
+
+/// سجل الحضور اليومي. يُنشأ تلقائياً عند استلام السائق بضاعة للتوصيل أو تسليمها
+model AttendanceLog {
+  id              String           @id @default(cuid())
+  employeeId      String           @map("employee_id")
+  date            DateTime         @db.Date
+  status          AttendanceStatus
+  source          AttendanceSource
+  /// عدد القطع المستلمة للتوصيل في هذا اليوم
+  receivedUnits   Int              @default(0) @map("received_units")
+  /// عدد القطع المسلّمة فعلياً للعملاء (delivered_count)
+  deliveredUnits  Int              @default(0) @map("delivered_units")
+  /// عدد الطرود / الطلبات المسلّمة
+  deliveredColis  Int              @default(0) @map("delivered_colis")
+  firstActivityAt DateTime?        @map("first_activity_at") @db.Timestamptz(3)
+  lastActivityAt  DateTime?        @map("last_activity_at") @db.Timestamptz(3)
+  notes           String?
+  setById         String?          @map("set_by")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  setBy    User?    @relation(fields: [setById], references: [id])
+
+  @@unique([employeeId, date])
+  @@index([date])
+  @@map("attendance_logs")
+}
+
+/// أسعار التوصيل الخاصة. الأكثر تحديداً يفوز: موظف > فئة منتج > نقطة دليفري > الافتراضي في الإعدادات
+model DeliveryRate {
+  id              String         @id @default(cuid())
+  mode            CommissionMode
+  amount          Decimal        @db.Decimal(14, 2)
+  employeeId      String?        @map("employee_id")
+  category        String?
+  deliveryPointId String?        @map("delivery_point_id")
+  label           String?
+  isActive        Boolean        @default(true) @map("is_active")
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employee      Employee?      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  deliveryPoint DeliveryPoint? @relation(fields: [deliveryPointId], references: [id])
+
+  @@index([mode, isActive])
+  @@map("delivery_rates")
+}
+
+/// عمولة توصيل محسوبة لحظة التسليم بالسعر المعتمد وقتها (لا تتغير إذا تغيّر السعر لاحقاً)
+model DeliveryEarning {
+  id                String         @id @default(cuid())
+  employeeId        String         @map("employee_id")
+  driverId          String         @map("driver_id")
+  operationId       String         @map("operation_id")
+  kind              EarningKind    @default(DELIVERY)
+  /// لسطر الإلغاء: سند التسليم الأصلي الذي أُلغيت عمولته
+  sourceOperationId String?        @map("source_operation_id")
+  date              DateTime       @db.Date
+  mode              CommissionMode
+  category          String?
+  /// عدد القطع (PER_UNIT) أو 1 للطرد (PER_COLIS)
+  quantity          Int
+  units             Int
+  rate              Decimal        @db.Decimal(14, 2)
+  amount            Decimal        @db.Decimal(14, 2)
+  rateSource        String         @map("rate_source")
+  payoutId          String?        @map("payout_id")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee        Employee   @relation(fields: [employeeId], references: [id])
+  driver          Driver     @relation(fields: [driverId], references: [id])
+  operation       Operation  @relation(fields: [operationId], references: [id])
+  sourceOperation Operation? @relation("EarningSourceOperation", fields: [sourceOperationId], references: [id])
+  payout          Payout?    @relation(fields: [payoutId], references: [id])
+
+  @@index([employeeId, date])
+  @@index([payoutId])
+  @@index([operationId])
+  @@index([sourceOperationId])
+  @@map("delivery_earnings")
+}
+
+/// كشف مستحقات موظف لفترة (payroll_and_delivery_payouts) مع لقطة من إعدادات الدفع وقت الحساب
+model Payout {
+  id               String       @id @default(cuid())
+  payoutNo         String       @unique @map("payout_no")
+  employeeId       String       @map("employee_id")
+  periodStart      DateTime     @map("period_start") @db.Date
+  periodEnd        DateTime     @map("period_end") @db.Date
+  payType          PayType      @map("pay_type")
+  monthlySalary    Decimal      @map("monthly_salary") @db.Decimal(14, 2)
+  dailyRate        Decimal      @map("daily_rate") @db.Decimal(14, 2)
+  standardDays     Int          @map("standard_days")
+  workedDays       Int          @map("worked_days")
+  baseAmount       Decimal      @map("base_amount") @db.Decimal(14, 2)
+  deliveredUnits   Int          @map("delivered_units")
+  deliveredColis   Int          @map("delivered_colis")
+  commissionAmount Decimal      @map("commission_amount") @db.Decimal(14, 2)
+  /// عدد القطع التي أرجعها العملاء بعد تسليمها، ومجموع العمولة الملغاة عنها
+  returnedUnits    Int          @default(0) @map("returned_units")
+  reversalAmount   Decimal      @default(0) @map("reversal_amount") @db.Decimal(14, 2)
+  bonusAmount      Decimal      @default(0) @map("bonus_amount") @db.Decimal(14, 2)
+  deductionAmount  Decimal      @default(0) @map("deduction_amount") @db.Decimal(14, 2)
+  netAmount        Decimal      @map("net_amount") @db.Decimal(14, 2)
+  paidAmount       Decimal      @default(0) @map("paid_amount") @db.Decimal(14, 2)
+  status           PayoutStatus @default(PENDING)
+  notes            String?
+  createdById      String       @map("created_by")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employee  Employee          @relation(fields: [employeeId], references: [id])
+  createdBy User              @relation(fields: [createdById], references: [id])
+  earnings  DeliveryEarning[]
+  payments  PayoutPayment[]
+
+  @@index([employeeId, periodStart])
+  @@index([status])
+  @@map("payroll_and_delivery_payouts")
+}
+
+model PayoutPayment {
+  id             String        @id @default(cuid())
+  payoutId       String        @map("payout_id")
+  /// يمنع تسجيل نفس الدفعة مرتين عند إعادة الإرسال
+  idempotencyKey String        @unique @map("idempotency_key")
+  amount         Decimal       @db.Decimal(14, 2)
+  method         PaymentMethod
+  reference      String?
+  note           String?
+  paidAt         DateTime      @map("paid_at") @db.Timestamptz(3)
+  createdById    String        @map("created_by")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  payout    Payout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  createdBy User   @relation(fields: [createdById], references: [id])
+
+  @@index([payoutId])
+  @@map("payout_payments")
 }

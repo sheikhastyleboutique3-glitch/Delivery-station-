@@ -5,7 +5,7 @@ import { SESSION_COOKIE, verifySession } from '@/lib/auth/token';
  * حارس الصفحات (Next.js 16 proxy). يوجّه غير المسجلين إلى /login
  * ويبقي السائق داخل واجهته. الحماية الفعلية للبيانات في الـ API نفسه.
  */
-const ADMIN_ONLY = ['/users', '/settings', '/audit', '/points'];
+const ADMIN_ONLY = ['/users', '/settings', '/audit', '/points', '/employees', '/payroll'];
 const DRIVER_ALLOWED = ['/driver', '/ops'];
 
 export async function proxy(req: NextRequest) {

@@ -230,6 +230,14 @@ export const SCAN_SOURCE_LABELS: Record<ScanSource, string> = {
 
 export interface AppSettings {
   companyName: string;
+  /** سعر التوصيل الافتراضي لكل قطعة مسلّمة */
+  defaultRatePerUnit: number;
+  /** سعر التوصيل الافتراضي لكل طرد / طلب مكتمل */
+  defaultRatePerColis: number;
+  /** أيام العمل المعيارية في الشهر (لحساب أجر اليوم من الراتب الشهري) */
+  standardWorkDays: number;
+  /** التنبيه قبل انتهاء صلاحية الوثائق بعدد أيام */
+  documentExpiryAlertDays: number;
   autoRestockGoodReturns: boolean;
   redAlertHours: number;
   custodyAlertHours: number;
@@ -244,12 +252,16 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   companyName: 'رصد',
+  defaultRatePerUnit: 200,
+  defaultRatePerColis: 200,
+  standardWorkDays: 26,
+  documentExpiryAlertDays: 30,
   autoRestockGoodReturns: false,
   redAlertHours: 24,
   custodyAlertHours: 24,
   pendingAckAlertHours: 2,
-  currency: 'QAR',
-  timezone: 'Asia/Qatar',
+  currency: 'DZD',
+  timezone: 'Africa/Algiers',
   numerals: 'latin',
   barcodeFormat: 'CODE128',
   labelWidthMm: 50,
@@ -269,3 +281,85 @@ export function ean13CheckDigit(first12: string): number {
 export function isValidEan13(code: string): boolean {
   return /^\d{13}$/.test(code) && ean13CheckDigit(code.slice(0, 12)) === Number(code[12]);
 }
+
+// ─── HR: الموظفون والحضور والرواتب ─────────────────────────────
+
+export const EMPLOYEE_JOBS = ['DRIVER', 'WAREHOUSE_KEEPER', 'HUB_MANAGER', 'ADMINISTRATIVE', 'OTHER'] as const;
+export type EmployeeJob = (typeof EMPLOYEE_JOBS)[number];
+export const EMPLOYEE_JOB_LABELS: Record<EmployeeJob, string> = {
+  DRIVER: 'سائق',
+  WAREHOUSE_KEEPER: 'أمين مستودع',
+  HUB_MANAGER: 'مسؤول نقطة دليفري',
+  ADMINISTRATIVE: 'إداري',
+  OTHER: 'أخرى',
+};
+
+export const EMPLOYEE_STATUSES = ['ACTIVE', 'SUSPENDED', 'TERMINATED'] as const;
+export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number];
+export const EMPLOYEE_STATUS_LABELS: Record<EmployeeStatus, string> = {
+  ACTIVE: 'نشط',
+  SUSPENDED: 'موقوف',
+  TERMINATED: 'متوقف عن العمل',
+};
+
+export const PAY_TYPES = ['PER_DELIVERY', 'MONTHLY_OR_DAILY', 'HYBRID'] as const;
+export type PayType = (typeof PAY_TYPES)[number];
+export const PAY_TYPE_LABELS: Record<PayType, string> = {
+  PER_DELIVERY: 'عمولة بالتوصيل',
+  MONTHLY_OR_DAILY: 'راتب شهري / أيام عمل',
+  HYBRID: 'هجين (أجر أيام + عمولة)',
+};
+export const payTypeHasBase = (t: PayType) => t !== 'PER_DELIVERY';
+export const payTypeHasCommission = (t: PayType) => t !== 'MONTHLY_OR_DAILY';
+
+export const COMMISSION_MODES = ['PER_UNIT', 'PER_COLIS'] as const;
+export type CommissionMode = (typeof COMMISSION_MODES)[number];
+export const COMMISSION_MODE_LABELS: Record<CommissionMode, string> = {
+  PER_UNIT: 'لكل قطعة مسلّمة',
+  PER_COLIS: 'لكل طرد / طلب مكتمل',
+};
+
+export const ATTENDANCE_STATUSES = ['PRESENT', 'ABSENT', 'LEAVE', 'OFF'] as const;
+export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
+export const ATTENDANCE_LABELS: Record<AttendanceStatus, string> = {
+  PRESENT: 'حاضر',
+  ABSENT: 'غائب',
+  LEAVE: 'إجازة',
+  OFF: 'راحة',
+};
+export const ATTENDANCE_SOURCE_LABELS: Record<'AUTO_DISPATCH' | 'AUTO_DELIVERY' | 'MANUAL', string> = {
+  AUTO_DISPATCH: 'تلقائي: استلام للتوصيل',
+  AUTO_DELIVERY: 'تلقائي: تسليم',
+  MANUAL: 'يدوي',
+};
+
+export const DOCUMENT_TYPES = ['ID_FRONT', 'ID_BACK', 'PHOTO', 'DRIVING_LICENSE', 'CONTRACT', 'OTHER'] as const;
+export type DocumentType = (typeof DOCUMENT_TYPES)[number];
+export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
+  ID_FRONT: 'بطاقة التعريف (الوجه)',
+  ID_BACK: 'بطاقة التعريف (الخلف)',
+  PHOTO: 'الصورة الشخصية',
+  DRIVING_LICENSE: 'رخصة القيادة',
+  CONTRACT: 'عقد العمل',
+  OTHER: 'وثيقة أخرى',
+};
+export const ALLOWED_DOCUMENT_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
+export const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+
+export const PAYOUT_STATUSES = ['PENDING', 'PARTIAL', 'PAID'] as const;
+export type PayoutStatus = (typeof PAYOUT_STATUSES)[number];
+export const PAYOUT_STATUS_LABELS: Record<PayoutStatus, string> = {
+  PENDING: 'معلق',
+  PARTIAL: 'جزئي',
+  PAID: 'مدفوع',
+};
+
+export const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CCP', 'BARIDIMOB', 'OTHER'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  CASH: 'نقداً',
+  BANK_TRANSFER: 'تحويل بنكي',
+  CCP: 'حساب بريدي جاري (CCP)',
+  BARIDIMOB: 'بريدي موب',
+  OTHER: 'أخرى',
+};

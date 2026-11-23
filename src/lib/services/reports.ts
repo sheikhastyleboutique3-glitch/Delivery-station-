@@ -4,9 +4,11 @@ import type { Db } from '../db';
 import { requireRole, scopedPointId, type Actor } from '../actor';
 import { COLORS, COLOR_META, MOVEMENT_LABELS, SCAN_SOURCE_LABELS, type StockColor } from '../domain';
 import { getSettings } from '../settings';
+import { ATTENDANCE_LABELS, ATTENDANCE_SOURCE_LABELS, EMPLOYEE_JOB_LABELS, PAY_TYPE_LABELS, PAYOUT_STATUS_LABELS } from '../domain';
+import { dbDate, fromCents, toCents, ymdOf } from '../hr/util';
 import { movementInclude, movementWhere, movementQuerySchema, parseDateRange } from './queries';
 
-export const REPORT_KINDS = ['movements', 'custody', 'drivers', 'returns', 'inventory'] as const;
+export const REPORT_KINDS = ['movements', 'custody', 'drivers', 'returns', 'inventory', 'payroll', 'attendance'] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
 
 export const REPORT_TITLES: Record<ReportKind, string> = {
@@ -15,6 +17,8 @@ export const REPORT_TITLES: Record<ReportKind, string> = {
   drivers: 'أداء السائقين',
   returns: 'المرتجعات والتالف',
   inventory: 'الجرد حسب اللون',
+  payroll: 'الرواتب ومستحقات التوصيل',
+  attendance: 'الحضور اليومي',
 };
 
 export interface Report {
@@ -181,6 +185,103 @@ export async function buildReport(db: Db, actor: Actor, kind: ReportKind, raw: R
           lastSettled: date(d.lastSettledAt),
         };
       }),
+    };
+  }
+
+  if (kind === 'payroll' || kind === 'attendance') {
+    requireRole(actor, ['ADMIN']);
+    const from = q.from && /^\d{4}-\d{2}-\d{2}$/.test(q.from) ? q.from : null;
+    const to = q.to && /^\d{4}-\d{2}-\d{2}$/.test(q.to) ? q.to : null;
+    if (kind === 'payroll') {
+      const rows = await db.payout.findMany({
+        where: { ...(from ? { periodEnd: { gte: dbDate(from) } } : {}), ...(to ? { periodStart: { lte: dbDate(to) } } : {}), ...(pointId ? { employee: { deliveryPointId: pointId } } : {}) },
+        include: { employee: { select: { employeeNo: true, fullName: true, jobType: true } } },
+        orderBy: [{ periodStart: 'asc' }, { payoutNo: 'asc' }],
+        take: MAX_ROWS,
+      });
+      return {
+        title: REPORT_TITLES.payroll,
+        columns: [
+          { key: 'no', label: 'رقم الكشف' },
+          { key: 'emp', label: 'رقم الموظف' },
+          { key: 'name', label: 'الاسم' },
+          { key: 'job', label: 'الوظيفة' },
+          { key: 'period', label: 'الفترة' },
+          { key: 'payType', label: 'نظام الدفع' },
+          { key: 'days', label: 'أيام العمل' },
+          { key: 'units', label: 'قطع مسلّمة' },
+          { key: 'colis', label: 'طرود مسلّمة' },
+          { key: 'base', label: `أجر الأيام (${settings.currency})` },
+          { key: 'commission', label: `عمولة التوصيل (${settings.currency})` },
+          { key: 'returned', label: 'قطع أرجعها العملاء' },
+          { key: 'reversal', label: `عمولة ملغاة (${settings.currency})` },
+          { key: 'bonus', label: 'مكافأة' },
+          { key: 'deduction', label: 'خصم' },
+          { key: 'net', label: 'الصافي' },
+          { key: 'paid', label: 'المدفوع' },
+          { key: 'remaining', label: 'المتبقي' },
+          { key: 'status', label: 'الحالة' },
+        ],
+        rows: rows.map((p) => ({
+          no: p.payoutNo,
+          emp: p.employee.employeeNo,
+          name: p.employee.fullName,
+          job: EMPLOYEE_JOB_LABELS[p.employee.jobType],
+          period: `${ymdOf(p.periodStart)} → ${ymdOf(p.periodEnd)}`,
+          payType: PAY_TYPE_LABELS[p.payType],
+          days: p.workedDays,
+          units: p.deliveredUnits,
+          colis: p.deliveredColis,
+          base: Number(p.baseAmount),
+          commission: Number(p.commissionAmount),
+          returned: p.returnedUnits,
+          reversal: Number(p.reversalAmount),
+          bonus: Number(p.bonusAmount),
+          deduction: Number(p.deductionAmount),
+          net: Number(p.netAmount),
+          paid: Number(p.paidAmount),
+          remaining: Number(fromCents(toCents(p.netAmount) - toCents(p.paidAmount))),
+          status: PAYOUT_STATUS_LABELS[p.status],
+        })),
+      };
+    }
+    const logs = await db.attendanceLog.findMany({
+      where: {
+        ...(from || to ? { date: { ...(from ? { gte: dbDate(from) } : {}), ...(to ? { lte: dbDate(to) } : {}) } } : {}),
+        ...(pointId ? { employee: { deliveryPointId: pointId } } : {}),
+      },
+      include: { employee: { select: { employeeNo: true, fullName: true, jobType: true } } },
+      orderBy: [{ date: 'asc' }],
+      take: MAX_ROWS,
+    });
+    return {
+      title: REPORT_TITLES.attendance,
+      columns: [
+        { key: 'date', label: 'التاريخ' },
+        { key: 'emp', label: 'رقم الموظف' },
+        { key: 'name', label: 'الاسم' },
+        { key: 'job', label: 'الوظيفة' },
+        { key: 'status', label: 'الحالة' },
+        { key: 'source', label: 'المصدر' },
+        { key: 'received', label: 'قطع مستلمة للتوصيل' },
+        { key: 'delivered', label: 'قطع مسلّمة' },
+        { key: 'colis', label: 'طرود مسلّمة' },
+        { key: 'first', label: 'أول نشاط' },
+        { key: 'last', label: 'آخر نشاط' },
+      ],
+      rows: logs.map((l) => ({
+        date: ymdOf(l.date),
+        emp: l.employee.employeeNo,
+        name: l.employee.fullName,
+        job: EMPLOYEE_JOB_LABELS[l.employee.jobType],
+        status: ATTENDANCE_LABELS[l.status],
+        source: ATTENDANCE_SOURCE_LABELS[l.source],
+        received: l.receivedUnits,
+        delivered: l.deliveredUnits,
+        colis: l.deliveredColis,
+        first: date(l.firstActivityAt),
+        last: date(l.lastActivityAt),
+      })),
     };
   }
 

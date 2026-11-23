@@ -38,6 +38,14 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // ملفات الوثائق الشخصية: لا تنفيذ لأي محتوى داخلها حتى لو كان ملفاً ملغوماً
+        source: '/api/documents/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox" },
+          { key: 'Cache-Control', value: 'private, no-store' },
+        ],
+      },
+      {
         source: '/sw.js',
         headers: [
           { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },

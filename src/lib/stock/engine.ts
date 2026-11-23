@@ -338,6 +338,7 @@ export interface OperationSpec {
   toDeliveryPointId?: string | null;
   driverId?: string | null;
   customerId?: string | null;
+  sourceOperationId?: string | null;
   reason?: string | null;
   notes?: string | null;
 }
@@ -358,6 +359,8 @@ export const operationInclude = {
   performedBy: { select: { id: true, name: true } },
   acknowledgedBy: { select: { id: true, name: true } },
   settlement: true,
+  sourceOperation: { select: { id: true, opNo: true, kind: true } },
+  returns: { select: { id: true, opNo: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.OperationInclude;
 
 export type OperationWithDetails = Prisma.OperationGetPayload<{ include: typeof operationInclude }>;
@@ -408,6 +411,7 @@ export async function runOperation(
               toDeliveryPointId: spec.toDeliveryPointId ?? null,
               driverId: spec.driverId ?? null,
               customerId: spec.customerId ?? null,
+              sourceOperationId: spec.sourceOperationId ?? null,
               reason: spec.reason?.trim() || null,
               notes: spec.notes?.trim() || null,
               idempotencyKey: spec.idempotencyKey,

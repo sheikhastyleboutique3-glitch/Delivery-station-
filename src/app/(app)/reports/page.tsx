@@ -13,6 +13,8 @@ const KINDS = [
   { key: 'drivers', label: 'أداء السائقين (مسلّم ومرتجع)', range: true },
   { key: 'returns', label: 'المرتجعات والتالف', range: true },
   { key: 'inventory', label: 'الجرد حسب اللون', range: false },
+  { key: 'payroll', label: 'الرواتب ومستحقات التوصيل (مدير)', range: true },
+  { key: 'attendance', label: 'الحضور اليومي (مدير)', range: true },
 ] as const;
 
 interface Report {
@@ -62,7 +64,7 @@ export default function ReportsPage() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Field label="التقرير" className="lg:col-span-2">
             <Select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
-              {KINDS.map((k) => (
+              {KINDS.filter((k) => user.role === 'ADMIN' || (k.key !== 'payroll' && k.key !== 'attendance')).map((k) => (
                 <option key={k.key} value={k.key}>
                   {k.label}
                 </option>

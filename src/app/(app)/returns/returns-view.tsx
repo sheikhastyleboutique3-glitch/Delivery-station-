@@ -12,7 +12,7 @@ import { DriverSelect, PointSelect } from '@/components/pickers';
 import { useApp } from '@/components/providers';
 import { ScanBox } from '@/components/scanner/scan-box';
 import { useBalances } from '@/components/use-balances';
-import { Button, Card, Field, Input, PageHeader, Tabs, Textarea, cx } from '@/components/ui';
+import { Button, Card, Field, Input, PageHeader, QuantityStepper, Tabs, Textarea, cx } from '@/components/ui';
 
 type Condition = 'GOOD' | 'DAMAGED' | 'MISSING';
 type DriverExtra = { condition: Condition; reason: string };
@@ -62,7 +62,7 @@ export function ReturnsView({ initialDriverId, initialTab }: { initialDriverId: 
       <Tabs
         tabs={[
           { key: 'driver', label: 'مرتجع من سائق' },
-          { key: 'customer', label: 'مرتجع من عميل (بعد التسليم)' },
+          { key: 'customer', label: 'مرتجع من عميل' },
         ]}
         value={tab}
         onChange={setTab}
@@ -216,13 +216,229 @@ function DriverReturn({ initialDriverId }: { initialDriverId: string }) {
   );
 }
 
+interface Returnable {
+  operation: {
+    id: string;
+    opNo: string;
+    createdAt: string;
+    driver: { id: string; fullName: string } | null;
+    customer: { id: string; name: string; phone: string } | null;
+  };
+  lines: {
+    productId: string;
+    productName: string;
+    sku: string;
+    barcode: string;
+    trackUnits: boolean;
+    delivered: number;
+    returned: number;
+    remaining: number;
+    serialsRemaining: string[];
+  }[];
+}
+
+type CrLine = { qty: number; condition: 'GOOD' | 'DAMAGED'; reason: string; serials: string[] };
+
 function CustomerReturn() {
+  const { f, toast } = useApp();
   const [pointId, setPointId] = useState('');
-  const [customer, setCustomer] = useState<Customer | null>(null);
   const [search, setSearch] = useState('');
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [deliveryId, setDeliveryId] = useState<string | null>(null);
+  const [legacy, setLegacy] = useState(false);
+  const [lines, setLines] = useState<Record<string, CrLine>>({});
   const [notes, setNotes] = useState('');
-  const dq = useDebounce(search, 300);
-  const { data: customers } = useApi<Paged<Customer>>(dq.length >= 2 && !customer ? `/api/customers${qs({ q: dq, pageSize: 8 })}` : null);
+  const dq = useDebounce(search.trim(), 300);
+  const isOpNo = /^dlv-?\d+/i.test(dq);
+  const { data: customers } = useApi<Paged<Customer>>(!isOpNo && dq.length >= 2 && !customer ? `/api/customers${qs({ q: dq, pageSize: 8 })}` : null);
+  const { data: deliveries } = useApi<Paged<{ id: string; opNo: string; createdAt: string; totalQuantity?: number; driver?: { fullName: string } | null; customer?: { name: string } | null }>>(
+    customer || isOpNo ? `/api/ops${qs({ kind: 'DELIVERY', customerId: customer?.id, q: isOpNo ? dq : undefined, pageSize: 20 })}` : null,
+  );
+  const { data: ret, reload } = useApi<Returnable>(deliveryId ? `/api/ops/${deliveryId}/returnable` : null);
+  const op = useOperationSubmit('customer-return');
+
+  const chosen = Object.entries(lines).filter(([, l]) => l.qty > 0);
+  const invalid = chosen.some(([, l]) => !l.reason.trim());
+  const totalQty = chosen.reduce((s, [, l]) => s + l.qty, 0);
+  const setLine = (id: string, patch: Partial<CrLine>) =>
+    setLines((x) => ({ ...x, [id]: { ...(x[id] ?? { qty: 0, condition: 'GOOD', reason: '', serials: [] }), ...patch } }));
+
+  async function save() {
+    const res = await op.submit({
+      receivingPointId: pointId,
+      deliveryOperationId: deliveryId,
+      notes,
+      lines: chosen.map(([productId, l]) => ({ productId, quantity: l.qty, condition: l.condition, reason: l.reason, unitSerials: l.serials })),
+    });
+    if (res) {
+      setLines({});
+      setNotes('');
+      reload();
+    }
+  }
+
+  if (op.result) return <OpSuccess op={op.result} onNew={op.reset} />;
+  if (legacy) return <CustomerReturnWithoutReceipt onBack={() => setLegacy(false)} />;
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-3">
+      <div className="space-y-4 lg:col-span-2">
+        <Card title="1) سند التسليم الأصلي">
+          {!deliveryId ? (
+            <div className="space-y-2">
+              {customer ? (
+                <div className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm">
+                  <span>
+                    <b>{customer.name}</b> · <span className="ltr">{customer.phone}</span>
+                  </span>
+                  <Button variant="ghost" size="sm" onClick={() => setCustomer(null)}>
+                    تغيير
+                  </Button>
+                </div>
+              ) : (
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="اسم العميل أو هاتفه، أو رقم سند التسليم مثل DLV-001005" type="search" />
+              )}
+              {!customer &&
+                customers?.items.map((c) => (
+                  <button key={c.id} type="button" onClick={() => setCustomer(c)} className="flex min-h-11 w-full items-center justify-between rounded-lg px-2 text-sm hover:bg-slate-50">
+                    <span>{c.name}</span>
+                    <span className="ltr text-slate-500">{c.phone}</span>
+                  </button>
+                ))}
+              {deliveries && (
+                <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+                  {deliveries.items.length === 0 && <li className="p-3 text-sm text-slate-500">لا توجد تسليمات مطابقة.</li>}
+                  {deliveries.items.map((d) => (
+                    <li key={d.id}>
+                      <button type="button" onClick={() => { setDeliveryId(d.id); setLines({}); }} className="flex min-h-12 w-full flex-wrap items-center justify-between gap-2 px-3 py-2 text-start text-sm hover:bg-slate-50">
+                        <span>
+                          <span className="ltr me-2 font-mono font-bold">{d.opNo}</span>
+                          {d.customer?.name}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {f.n(d.totalQuantity ?? 0)} قطعة · السائق {d.driver?.fullName} · {f.dateTime(d.createdAt)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-slate-500">
+                مرتجع لا تعرف سند تسليمه؟{' '}
+                <button className="font-bold text-blue-700 underline" onClick={() => setLegacy(true)}>
+                  تسجيل بدون سند
+                </button>{' '}
+                (لن تُلغى عمولة أي سائق).
+              </p>
+            </div>
+          ) : !ret ? (
+            <p className="text-sm text-slate-500">جارِ التحميل…</p>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-green-50 p-3 text-sm">
+              <span>
+                <span className="ltr me-2 font-mono font-bold">{ret.operation.opNo}</span>
+                {ret.operation.customer?.name} · السائق <b>{ret.operation.driver?.fullName}</b> · {f.dateTime(ret.operation.createdAt)}
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => { setDeliveryId(null); setLines({}); }}>
+                تغيير السند
+              </Button>
+            </div>
+          )}
+        </Card>
+
+        {ret && (
+          <Card title="2) المنتجات المرتجعة">
+            <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+              {ret.lines.map((r) => {
+                const l = lines[r.productId] ?? { qty: 0, condition: 'GOOD' as const, reason: '', serials: [] };
+                return (
+                  <li key={r.productId} className={cx('space-y-2 p-3', r.remaining === 0 && 'opacity-50')}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-bold">{r.productName}</p>
+                        <p className="text-xs text-slate-500">
+                          سُلّم {f.n(r.delivered)} · أُرجع سابقاً {f.n(r.returned)} · المتبقي <b>{f.n(r.remaining)}</b>
+                        </p>
+                      </div>
+                      {r.trackUnits ? (
+                        <div className="flex flex-wrap gap-1">
+                          {r.serialsRemaining.map((sn) => {
+                            const on = l.serials.includes(sn);
+                            return (
+                              <button
+                                key={sn}
+                                type="button"
+                                onClick={() => {
+                                  const serials = on ? l.serials.filter((x) => x !== sn) : [...l.serials, sn];
+                                  setLine(r.productId, { serials, qty: serials.length });
+                                }}
+                                className={cx('ltr min-h-9 rounded-md border px-2 font-mono text-xs', on ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-300')}
+                              >
+                                {sn}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <QuantityStepper value={l.qty} min={0} max={r.remaining} onChange={(v) => setLine(r.productId, { qty: v })} />
+                      )}
+                    </div>
+                    {l.qty > 0 && (
+                      <>
+                        <ConditionPicker
+                          value={l.condition}
+                          options={[
+                            { key: 'GOOD' as const, label: 'سليمة' },
+                            { key: 'DAMAGED' as const, label: 'تالفة' },
+                          ]}
+                          onChange={(c) => setLine(r.productId, { condition: c })}
+                        />
+                        <Input
+                          placeholder="سبب الإرجاع (إلزامي)"
+                          value={l.reason}
+                          onChange={(e) => setLine(r.productId, { reason: e.target.value })}
+                          className={!l.reason.trim() ? 'border-red-400' : ''}
+                        />
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+        )}
+      </div>
+
+      <Card title="بيانات المرتجع">
+        <div className="space-y-3">
+          <PointSelect value={pointId} onChange={setPointId} label="نقطة الاستلام" />
+          <Field label="ملاحظات (اختياري)">
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
+          {ret && totalQty > 0 && (
+            <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+              سيُلغى من مستحقات السائق <b>{ret.operation.driver?.fullName}</b> عمولة {f.n(totalQty)} قطعة بنفس السعر الذي حُسبت به وقت التسليم. للسائقين بنظام «لكل
+              طرد» تُلغى عمولة الطرد فقط إذا أُرجع الطلب كاملاً.
+            </p>
+          )}
+          <Button
+            className="w-full"
+            size="lg"
+            onClick={() => (invalid ? toast('اكتب سبب الإرجاع لكل منتج', 'error') : save())}
+            loading={op.busy}
+            disabled={!pointId || !deliveryId || totalQty === 0}
+          >
+            تسجيل المرتجع
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function CustomerReturnWithoutReceipt({ onBack }: { onBack: () => void }) {
+  const [pointId, setPointId] = useState('');
+  const [notes, setNotes] = useState('');
   const L = useLines<CustomerExtra>(useCallback(() => ({ condition: 'GOOD' as const, reason: '' }), []));
   const op = useOperationSubmit('customer-return');
   const balances = useBalances(pointId, L.lines.map((l) => l.product.id));
@@ -231,21 +447,18 @@ function CustomerReturn() {
   async function save() {
     const res = await op.submit({
       receivingPointId: pointId,
-      customerId: customer?.id ?? null,
       notes,
       lines: L.toPayload((l) => ({ condition: l.extra.condition, reason: l.extra.reason })),
     });
-    if (res) {
-      L.clear();
-      setNotes('');
-    }
+    if (res) L.clear();
   }
 
   if (op.result) return <OpSuccess op={op.result} onNew={op.reset} />;
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
-      <Card className="lg:col-span-2" title="الأصناف المرتجعة من العميل">
+      <Card className="lg:col-span-2" title="مرتجع بدون سند تسليم" actions={<Button variant="ghost" size="sm" onClick={onBack}>رجوع للبحث بالسند</Button>}>
+        <p className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">بدون سند التسليم لا يمكن معرفة السائق، فلن تُلغى أي عمولة. استخدم هذا فقط للحالات القديمة.</p>
         <ScanBox onResult={(r, src) => L.addFromLookup(r, src)} />
         <div className="mt-4">
           <LinesList
@@ -278,32 +491,9 @@ function CustomerReturn() {
       <Card title="بيانات المرتجع">
         <div className="space-y-3">
           <PointSelect value={pointId} onChange={setPointId} label="نقطة الاستلام" />
-          <Field label="العميل (اختياري)">
-            {customer ? (
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm">
-                <span>
-                  <b>{customer.name}</b> · <span className="ltr">{customer.phone}</span>
-                </span>
-                <Button variant="ghost" size="sm" onClick={() => setCustomer(null)}>
-                  تغيير
-                </Button>
-              </div>
-            ) : (
-              <>
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث بالاسم أو الهاتف" />
-                {customers?.items.map((c) => (
-                  <button key={c.id} type="button" onClick={() => setCustomer(c)} className="mt-1 flex min-h-11 w-full items-center justify-between rounded-lg px-2 text-sm hover:bg-slate-50">
-                    <span>{c.name}</span>
-                    <span className="ltr text-slate-500">{c.phone}</span>
-                  </button>
-                ))}
-              </>
-            )}
-          </Field>
           <Field label="ملاحظات (اختياري)">
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>
-          <p className="text-xs text-slate-500">تُخصم الكمية من الأخضر (المُسلّم) في نقطة الاستلام.</p>
           <Button className="w-full" size="lg" onClick={save} loading={op.busy} disabled={!pointId || L.lines.length === 0 || invalid}>
             تسجيل المرتجع
           </Button>

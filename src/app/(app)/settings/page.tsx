@@ -49,6 +49,22 @@ export default function SettingsPage() {
             <p className="text-xs text-slate-500">عند الإيقاف (الافتراضي) يذهب المرتجع السليم إلى البنفسجي بانتظار الفرز.</p>
           </div>
         </Card>
+        <Card title="الرواتب ومستحقات التوصيل">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="سعر التوصيل الافتراضي لكل قطعة مسلّمة" error={errors.defaultRatePerUnit} hint="مثال: 200 دج. يُطبَّق على التسليمات الجديدة فقط">
+              <Input dir="ltr" type="number" min={1} step="0.01" value={s.defaultRatePerUnit} onChange={num('defaultRatePerUnit')} />
+            </Field>
+            <Field label="سعر التوصيل الافتراضي لكل طرد / طلب" error={errors.defaultRatePerColis}>
+              <Input dir="ltr" type="number" min={1} step="0.01" value={s.defaultRatePerColis} onChange={num('defaultRatePerColis')} />
+            </Field>
+            <Field label="أيام العمل المعيارية في الشهر" error={errors.standardWorkDays} hint="أجر اليوم = الراتب الشهري ÷ هذا الرقم (ما لم يُحدد أجر يومي للموظف)">
+              <Input dir="ltr" type="number" min={1} max={31} value={s.standardWorkDays} onChange={num('standardWorkDays')} />
+            </Field>
+            <Field label="التنبيه قبل انتهاء الوثائق (يوم)" error={errors.documentExpiryAlertDays}>
+              <Input dir="ltr" type="number" min={1} max={365} value={s.documentExpiryAlertDays} onChange={num('documentExpiryAlertDays')} />
+            </Field>
+          </div>
+        </Card>
         <Card title="التنبيهات">
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="أحمر لم يُعالج بعد (ساعة)" error={errors.redAlertHours}>
@@ -67,10 +83,10 @@ export default function SettingsPage() {
             <Field label="اسم الشركة (يظهر في السندات)" error={errors.companyName}>
               <Input value={s.companyName} onChange={(e) => setS({ ...s, companyName: e.target.value })} />
             </Field>
-            <Field label="العملة (رمز ISO)" error={errors.currency} hint="مثال: QAR, SAR, AED, KWD, EGP">
+            <Field label="العملة (رمز ISO)" error={errors.currency} hint="الدينار الجزائري: DZD">
               <Input dir="ltr" value={s.currency} onChange={(e) => setS({ ...s, currency: e.target.value.toUpperCase() })} />
             </Field>
-            <Field label="المنطقة الزمنية" error={errors.timezone} hint="مثال: Asia/Qatar, Asia/Riyadh, Africa/Cairo">
+            <Field label="المنطقة الزمنية" error={errors.timezone} hint="الجزائر: Africa/Algiers">
               <Input dir="ltr" value={s.timezone} onChange={(e) => setS({ ...s, timezone: e.target.value })} />
             </Field>
             <Field label="الأرقام">

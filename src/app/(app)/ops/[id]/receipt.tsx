@@ -111,6 +111,28 @@ export function OperationReceipt({ id }: { id: string }) {
               </dd>
             </div>
           )}
+          {op.sourceOperation && (
+            <div>
+              <dt className="text-slate-500">مرتجع من سند التسليم</dt>
+              <dd>
+                <a href={`/ops/${op.sourceOperation.id}`} className="ltr font-mono font-bold text-blue-700 underline">
+                  {op.sourceOperation.opNo}
+                </a>
+              </dd>
+            </div>
+          )}
+          {op.returns && op.returns.length > 0 && (
+            <div>
+              <dt className="text-slate-500">مرتجعات العميل من هذا التسليم</dt>
+              <dd className="flex flex-wrap gap-2">
+                {op.returns.map((r) => (
+                  <a key={r.id} href={`/ops/${r.id}`} className="ltr font-mono font-bold text-blue-700 underline">
+                    {r.opNo}
+                  </a>
+                ))}
+              </dd>
+            </div>
+          )}
           {op.reason && (
             <div className="sm:col-span-2">
               <dt className="text-slate-500">السبب</dt>
