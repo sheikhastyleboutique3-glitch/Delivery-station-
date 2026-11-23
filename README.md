@@ -132,8 +132,8 @@ Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 (RTL) · PostgreSQL · P
 
    | المفتاح | القيمة |
    |---|---|
-   | `DATABASE_URL` | الرابط مع Pooling من Neon (فيه `-pooler`) |
-   | `AUTH_SECRET` | المفتاح من الخطوة 2 (32 حرفاً على الأقل) |
+   | `DATABASE_URL` | الرابط مع Pooling من Neon (فيه `-pooler`). أو اربط قاعدة Neon من **Extensions** في Netlify، فيُضبط `NETLIFY_DATABASE_URL` تلقائياً ويُقبل بدلاً منه |
+   | `AUTH_SECRET` | مُستحسن (32 حرفاً على الأقل). إذا تُرك، يُشتق مفتاح ثابت من بيانات اتصال قاعدة البيانات |
    | `DIRECT_URL` | اختياري: الرابط بدون Pooling. إذا تُرك يُستنتج تلقائياً بحذف `-pooler` |
    | `SEED_ADMIN_EMAIL` + `SEED_ADMIN_PASSWORD` | اختياري: يُنشأ حساب المدير أثناء النشر إذا لم يكن موجوداً (بدون بيانات تجريبية، وكلمة المرور لا تتغير في النشرات التالية) |
 

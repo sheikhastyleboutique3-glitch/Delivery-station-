@@ -15,10 +15,10 @@ import { createEmployee, changeEmployeeStatus } from '../src/lib/hr/employees';
 import { markAttendance } from '../src/lib/hr/attendance';
 import { addPayment, createPayout, upsertRate } from '../src/lib/hr/payroll';
 import { localDate } from '../src/lib/hr/util';
-import { ensureDirectUrl } from '../src/lib/env';
+import { applyDatabaseEnv } from '../src/lib/env';
 import { passwordSchema } from '../src/lib/validation';
 
-ensureDirectUrl();
+applyDatabaseEnv();
 import {
   customerReturn,
   deliver,
