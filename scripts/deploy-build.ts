@@ -69,13 +69,18 @@ if (problems.length) {
 }
 
 // ─── 2..5) Run the build steps ──────────────────────────────────
-function run(title: string, cmd: string, args: string[], extraEnv: Env = {}) {
+function run(title: string, cmd: string, args: string[], extraEnv: Env = {}, opts: { optional?: boolean } = {}) {
   step(title);
   const r = spawnSync(cmd, args, { stdio: 'inherit', env: { ...env, ...extraEnv } as NodeJS.ProcessEnv, shell: process.platform === 'win32' });
   if (r.status !== 0) {
+    if (opts.optional) {
+      console.warn(`\n⚠ "${title}" failed (exit code ${r.status ?? r.signal}). The site will still be deployed; see the error above.`);
+      return false;
+    }
     console.error(`\n✗ "${title}" failed (exit code ${r.status ?? r.signal}).`);
     process.exit(r.status ?? 1);
   }
+  return true;
 }
 
 run('Generating Prisma client', 'npx', ['prisma', 'generate']);
@@ -86,7 +91,7 @@ if (wantsSeed) {
   run('Creating the first admin account (skipped if it already exists)', 'npx', ['tsx', 'prisma/seed.ts'], {
     DATABASE_URL: env.DIRECT_URL,
     SEED_DEMO: env.SEED_DEMO?.trim() || 'false',
-  });
+  }, { optional: true }); // a seed problem must never take the live site down
 } else {
   step('Admin account: SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD not set → skipped (run the "Database" GitHub Action to create it)');
 }
